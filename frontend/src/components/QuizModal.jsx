@@ -386,11 +386,6 @@ const QuizModal = ({ videoId, videoTitle, language, onClose }) => {
                       })}
                     </div>
 
-                    {r.explanation && (
-                      <p className="mt-3 rounded-lg bg-slate-100 p-3 text-xs leading-relaxed text-slate-600 dark:bg-slate-800/70 dark:text-slate-300">
-                        💡 {r.explanation}
-                      </p>
-                    )}
                   </div>
                 ))}
               </div>
