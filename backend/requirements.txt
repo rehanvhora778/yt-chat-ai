@@ -1,0 +1,42 @@
+# ===== YT Chat GenAI - Backend Dependencies =====
+
+# Web framework
+Flask==3.0.3
+Flask-Cors==4.0.1
+gunicorn==22.0.0
+
+# Environment & utilities
+python-dotenv==1.0.1
+requests==2.32.3
+
+# Authentication
+PyJWT==2.9.0
+Werkzeug==3.0.3
+
+# Database (MongoDB Atlas)
+pymongo==4.8.0
+dnspython==2.6.1
+
+# Transcript extraction (v1.x — required; 0.6.x is broken against current YouTube)
+youtube-transcript-api==1.2.4
+
+# Audio-transcription fallback (for videos without captions)
+yt-dlp==2026.6.9
+imageio-ffmpeg==0.6.0    # bundles an ffmpeg binary if none is on PATH
+
+# AI / LangChain / Gemini
+langchain==0.2.16
+langchain-community==0.2.16
+langchain-google-genai==1.0.10
+google-generativeai==0.7.2
+
+# Groq — free, high-limit LLM (preferred over Gemini) + Whisper audio.
+# Pinned to the 0.1.x line for langchain-core 0.2.x compatibility; newer
+# langchain-groq requires langchain-core>=1.x and breaks the stack above.
+langchain-groq==0.1.10
+
+# Vector database
+faiss-cpu==1.8.0
+
+# Local embedding fallback (used when the Gemini embedding quota is exhausted)
+fastembed==0.3.6

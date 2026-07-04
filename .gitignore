@@ -1,0 +1,27 @@
+# ===== Python / Backend =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.env
+backend/.env
+
+# FAISS indexes generated at runtime
+backend/faiss_store/*
+!backend/faiss_store/.gitkeep
+
+# ===== Node / Frontend =====
+node_modules/
+dist/
+.vite/
+frontend/.env
+*.local
+
+# ===== Editor / OS =====
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
