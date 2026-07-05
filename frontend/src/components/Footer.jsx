@@ -19,8 +19,7 @@ const Footer = () => (
       </div>
 
       <p className="flex items-center gap-1">
-        Built with <Heart size={14} className="text-pink-500" /> for an AI/ML
-        final-year project.
+        Built with <Heart size={14} className="text-pink-500" /> by Rayhan Vora
       </p>
 
       <a
