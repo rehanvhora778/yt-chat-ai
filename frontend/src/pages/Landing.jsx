@@ -1,16 +1,15 @@
 /**
  * pages/Landing.jsx
  * -----------------
- * Public home page. Presented as a student project showcase (final-year
- * AI/ML project) rather than a SaaS pitch: hero + live-looking chat mock,
- * the real RAG pipeline, actual features, the tech stack, and an honest
- * closing card. No pricing, no fake stats.
+ * Public home page: hero with a live-looking chat preview, the RAG
+ * pipeline explained in four stages, the feature set, and the tech stack.
  */
 
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   MessageSquareText,
+  Sparkles,
   ListChecks,
   Languages,
   Download,
@@ -37,25 +36,25 @@ const pipeline = [
   {
     icon: Subtitles,
     title: "Extract",
-    desc: "Captions are pulled straight from the video. No captions? The audio gets transcribed with Whisper instead.",
+    desc: "Captions are retrieved directly from the video. For videos without captions, the audio is transcribed automatically.",
     tag: "youtube-transcript-api · Whisper",
   },
   {
     icon: Database,
     title: "Embed",
-    desc: "The transcript is split into chunks and turned into vectors that capture meaning, not just words.",
+    desc: "The transcript is segmented and converted into vector embeddings that capture semantic meaning.",
     tag: "Gemini embeddings · FAISS",
   },
   {
     icon: Search,
     title: "Retrieve",
-    desc: "Your question is matched against those vectors to find the exact moments of the video that answer it.",
+    desc: "Each question is matched against the transcript using semantic search to find the most relevant passages.",
     tag: "semantic search",
   },
   {
     icon: Bot,
     title: "Generate",
-    desc: "An LLM answers from the retrieved chunks only — grounded in the video, cited with timestamps.",
+    desc: "A large language model composes the answer from the retrieved passages, cited with precise timestamps.",
     tag: "Llama · Groq",
   },
 ];
@@ -63,33 +62,33 @@ const pipeline = [
 const features = [
   {
     icon: MessageSquareText,
-    title: "Chat that cites the video",
-    desc: "Every answer is grounded in the transcript and points you to the exact timestamp — no made-up facts.",
+    title: "Context-aware chat",
+    desc: "Ask questions in natural language and receive accurate answers grounded in the transcript, with timestamp citations.",
   },
   {
     icon: Lightbulb,
     title: "Summaries & insights",
-    desc: "Turn a 2-hour lecture into a tight summary with key takeaways when you're short on time.",
+    desc: "Generate concise summaries and key takeaways from long-form videos in seconds.",
   },
   {
     icon: GraduationCap,
-    title: "Auto-generated quizzes",
-    desc: "Quiz yourself on any video before an exam — instant scoring and a full answer review.",
+    title: "Interactive quizzes",
+    desc: "Assess your understanding with automatically generated quizzes, complete with scoring and answer review.",
   },
   {
     icon: Languages,
-    title: "English & Hindi",
-    desc: "Ask in either language and get the answer back in the same one, seamlessly.",
+    title: "Bilingual support",
+    desc: "Ask questions in English or Hindi and receive responses in the same language, seamlessly.",
   },
   {
     icon: BarChart3,
     title: "Learning analytics",
-    desc: "See your videos, questions and quiz scores over time on a personal dashboard.",
+    desc: "Track processed videos, conversations and quiz performance from a personal analytics dashboard.",
   },
   {
     icon: Download,
-    title: "Export your notes",
-    desc: "Save any chat or summary as a clean PDF or Word document for revision later.",
+    title: "Document export",
+    desc: "Download conversations and summaries as professionally formatted PDF or Word documents.",
   },
 ];
 
@@ -163,7 +162,7 @@ const Landing = () => {
           animate={{ opacity: 1, y: 0 }}
           className="inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-4 py-1.5 text-sm font-medium text-brand-700 dark:border-brand-500/20 dark:bg-brand-500/10 dark:text-brand-300"
         >
-          <GraduationCap size={15} /> Final-year AI/ML project · RAG
+          <Sparkles size={15} /> Powered by Retrieval-Augmented Generation
         </motion.span>
 
         <motion.h1
@@ -172,8 +171,8 @@ const Landing = () => {
           transition={{ delay: 0.1 }}
           className="mx-auto mt-6 max-w-4xl text-4xl font-extrabold leading-tight tracking-tight sm:text-6xl"
         >
-          Stop scrubbing through videos.{" "}
-          <span className="gradient-text">Just ask them.</span>
+          Turn any <span className="gradient-text">YouTube video</span> into a
+          conversation
         </motion.h1>
 
         <motion.p
@@ -182,9 +181,9 @@ const Landing = () => {
           transition={{ delay: 0.2 }}
           className="mx-auto mt-6 max-w-2xl text-lg text-slate-600 dark:text-slate-300"
         >
-          Paste a YouTube link and chat with the video — summaries, key
-          moments, quizzes and exportable notes. Built from scratch to learn
-          how Retrieval-Augmented Generation really works.
+          Paste a link and ask questions in natural language. Get accurate,
+          timestamp-cited answers, concise summaries, interactive quizzes and
+          exportable notes — all grounded in the video itself.
         </motion.p>
 
         <motion.div
@@ -194,21 +193,12 @@ const Landing = () => {
           className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row"
         >
           <Link to={ctaTarget} className="btn-primary px-7 py-3 text-base">
-            Try it out <ArrowRight size={18} />
+            Get Started <ArrowRight size={18} />
           </Link>
           <a href="#pipeline" className="btn-ghost px-7 py-3 text-base">
-            See how it works <ArrowDown size={16} />
+            How It Works <ArrowDown size={16} />
           </a>
         </motion.div>
-
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.45 }}
-          className="mt-4 text-sm text-slate-500 dark:text-slate-400"
-        >
-          Free to use — it's a project, not a product.
-        </motion.p>
 
         {/* Floating mock chat preview */}
         <motion.div
@@ -233,7 +223,7 @@ const Landing = () => {
 
             <div className="space-y-3 pt-4">
               <div className="ml-auto w-fit max-w-[80%] rounded-2xl rounded-tr-sm bg-gradient-to-br from-brand-600 to-purple-600 px-4 py-2.5 text-sm text-white">
-                Exam tomorrow — what are the four conditions for a deadlock?
+                What are the four conditions required for a deadlock?
               </div>
 
               <div className="w-fit max-w-[85%] rounded-2xl rounded-tl-sm bg-white px-4 py-2.5 text-sm text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200">
@@ -241,9 +231,9 @@ const Landing = () => {
                 <Timestamp>32:10</Timestamp>, <b>hold &amp; wait</b>{" "}
                 <Timestamp>35:42</Timestamp>, <b>no preemption</b>{" "}
                 <Timestamp>39:05</Timestamp> and <b>circular wait</b>{" "}
-                <Timestamp>41:56</Timestamp>. All four must hold at once —
-                break any one to prevent deadlock. Want a quick quiz on this
-                before your exam?
+                <Timestamp>41:56</Timestamp>. All four conditions must hold
+                simultaneously — preventing any one of them prevents deadlock.
+                Would you like a quiz on this topic?
               </div>
 
               {/* suggestion chips */}
@@ -270,14 +260,14 @@ const Landing = () => {
       {/* ---------- RAG pipeline ---------- */}
       <section id="pipeline" className="mx-auto max-w-6xl scroll-mt-24 px-4 py-16">
         <SectionHeading
-          eyebrow="Under the hood"
+          eyebrow="How it works"
           title={
             <>
-              The full <span className="gradient-text">RAG pipeline</span>,
-              end to end
+              From video link to{" "}
+              <span className="gradient-text">grounded answers</span>
             </>
           }
-          sub="No black box — this is exactly what happens between pasting a link and getting an answer."
+          sub="Every video is processed through a four-stage Retrieval-Augmented Generation pipeline for accurate, verifiable responses."
         />
 
         <motion.div
@@ -322,14 +312,14 @@ const Landing = () => {
       {/* ---------- Features ---------- */}
       <section id="features" className="mx-auto max-w-6xl px-4 py-16">
         <SectionHeading
-          eyebrow="What it can do"
+          eyebrow="Features"
           title={
             <>
-              Built around <span className="gradient-text">studying</span>,
-              not subscriptions
+              Everything you need to{" "}
+              <span className="gradient-text">learn from videos</span>
             </>
           }
-          sub="Everything here exists because it's useful the night before an exam."
+          sub="A complete toolkit for understanding, revising and organising video content."
         />
 
         <motion.div
@@ -356,9 +346,9 @@ const Landing = () => {
       {/* ---------- Tech stack ---------- */}
       <section className="mx-auto max-w-6xl px-4 py-16">
         <SectionHeading
-          eyebrow="Built with"
-          title="The stack, honestly listed"
-          sub="Every layer was wired up by hand — that was the whole point of the project."
+          eyebrow="Technology"
+          title="Built on a modern stack"
+          sub="A full-stack application combining a React frontend, a Flask REST API and a Retrieval-Augmented Generation pipeline."
         />
 
         <motion.div
