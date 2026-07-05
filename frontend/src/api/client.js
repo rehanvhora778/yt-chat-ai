@@ -59,6 +59,9 @@ export const authApi = {
 // ---- Video ----
 export const videoApi = {
   process: (url, language) => api.post("/process-video", { url, language }),
+  processStart: (url, language) =>
+    api.post("/process-video/start", { url, language }),
+  processStatus: (job_id) => api.get(`/process-video/status/${job_id}`),
   get: (video_id) => api.get(`/video/${video_id}`),
   summary: (video_id, language) => api.post("/summary", { video_id, language }),
   keyPoints: (video_id, language) =>

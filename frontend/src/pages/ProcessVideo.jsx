@@ -1,9 +1,10 @@
 /**
  * pages/ProcessVideo.jsx
  * ----------------------
- * Shows an animated multi-step progress UI while the backend fetches the
- * transcript, builds embeddings and stores them in FAISS. On success it
- * redirects to the chat page for that video.
+ * Shows live step-by-step progress while the backend processes the video.
+ * The backend runs the pipeline as a background job and reports which stage
+ * it is on; this page polls that status, so every step shown here reflects
+ * real execution — not an animation. On success it redirects to the chat.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -13,7 +14,7 @@ import toast from "react-hot-toast";
 import {
   Youtube,
   FileText,
-  Layers,
+  AudioLines,
   Database,
   CheckCircle2,
   Loader2,
@@ -24,11 +25,24 @@ import {
 import { videoApi, getErrorMessage } from "../api/client";
 
 const STEPS = [
+  { icon: Youtube, label: "Fetching video details" },
   { icon: FileText, label: "Extracting transcript" },
-  { icon: Layers, label: "Creating chunks" },
   { icon: Database, label: "Building vector database" },
-  { icon: Sparkles, label: "AI ready" },
+  { icon: Sparkles, label: "Saving & getting AI ready" },
 ];
+
+// Maps the backend's reported stage to an index in STEPS
+const STEP_INDEX = {
+  queued: 0,
+  metadata: 0,
+  captions: 1,
+  audio: 1,
+  index: 2,
+  save: 3,
+  done: STEPS.length,
+};
+
+const POLL_INTERVAL_MS = 1000;
 
 const ProcessVideo = () => {
   const location = useLocation();
@@ -36,8 +50,13 @@ const ProcessVideo = () => {
   const { url, language } = location.state || {};
 
   const [activeStep, setActiveStep] = useState(0);
+  const [audioFallback, setAudioFallback] = useState(false);
   const [error, setError] = useState("");
-  const startedRef = useRef(false);
+  // The start request must fire exactly once, but under React StrictMode the
+  // effect runs twice (run → cleanup → run). Sharing the promise in a ref lets
+  // every effect run subscribe to the same request, while each run owns its
+  // own poll timer so cleanup on real unmount stops the polling.
+  const startPromiseRef = useRef(null);
 
   useEffect(() => {
     // Guard: no URL means the user came here directly
@@ -45,41 +64,78 @@ const ProcessVideo = () => {
       navigate("/dashboard", { replace: true });
       return;
     }
-    // Prevent double-invocation under React StrictMode
-    if (startedRef.current) return;
-    startedRef.current = true;
 
-    // Drive the visual step animation while the request is in-flight
-    const stepTimer = setInterval(() => {
-      setActiveStep((s) => (s < STEPS.length - 1 ? s + 1 : s));
-    }, 1400);
+    let cancelled = false;
+    let pollTimer = null;
 
-    videoApi
-      .process(url, language)
-      .then((res) => {
-        clearInterval(stepTimer);
-        setActiveStep(STEPS.length); // all done
-        const video = res.data.video;
-        if (res.data.cached) {
-          toast.success("Loaded processed video");
-        } else if (res.data.transcript_source === "audio") {
-          toast.success("No captions found — transcribed the audio with AI!");
-        } else {
-          toast.success("Video processed!");
+    const fail = (msg) => {
+      if (pollTimer) clearInterval(pollTimer);
+      setError(msg);
+      toast.error(msg);
+    };
+
+    const succeed = (video, message) => {
+      if (pollTimer) clearInterval(pollTimer);
+      setActiveStep(STEPS.length);
+      toast.success(message);
+      setTimeout(
+        () => navigate(`/chat/${video.video_id}`, { state: { video } }),
+        700
+      );
+    };
+
+    const poll = (jobId) => {
+      pollTimer = setInterval(async () => {
+        try {
+          const res = await videoApi.processStatus(jobId);
+          if (cancelled) return;
+          const { step, done, error: jobError, video, transcript_source } =
+            res.data;
+
+          if (jobError) {
+            fail(jobError);
+            return;
+          }
+          if (step === "audio") setAudioFallback(true);
+          setActiveStep(STEP_INDEX[step] ?? 0);
+
+          if (done && video) {
+            succeed(
+              video,
+              transcript_source === "audio"
+                ? "No captions found — transcribed the audio with AI!"
+                : "Video processed!"
+            );
+          }
+        } catch (err) {
+          if (cancelled) return;
+          fail(getErrorMessage(err));
         }
-        setTimeout(
-          () => navigate(`/chat/${video.video_id}`, { state: { video } }),
-          700
-        );
+      }, POLL_INTERVAL_MS);
+    };
+
+    if (!startPromiseRef.current) {
+      startPromiseRef.current = videoApi.processStart(url, language);
+    }
+    startPromiseRef.current
+      .then((res) => {
+        if (cancelled) return;
+        if (res.data.done) {
+          // Already processed earlier — nothing to run
+          succeed(res.data.video, "Loaded processed video");
+        } else {
+          poll(res.data.job_id);
+        }
       })
       .catch((err) => {
-        clearInterval(stepTimer);
-        const msg = getErrorMessage(err);
-        setError(msg);
-        toast.error(msg);
+        if (cancelled) return;
+        fail(getErrorMessage(err));
       });
 
-    return () => clearInterval(stepTimer);
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearInterval(pollTimer);
+    };
   }, [url, language, navigate]);
 
   return (
@@ -111,6 +167,15 @@ const ProcessVideo = () => {
               {STEPS.map((step, i) => {
                 const done = i < activeStep || activeStep >= STEPS.length;
                 const active = i === activeStep && activeStep < STEPS.length;
+                // The transcript step switches to the audio-fallback label
+                // when the backend reports it is transcribing audio.
+                const isTranscriptStep = i === 1;
+                const Icon =
+                  isTranscriptStep && audioFallback ? AudioLines : step.icon;
+                const label =
+                  isTranscriptStep && audioFallback
+                    ? "Transcribing audio (no captions found)"
+                    : step.label;
                 return (
                   <li
                     key={step.label}
@@ -134,7 +199,7 @@ const ProcessVideo = () => {
                       ) : active ? (
                         <Loader2 size={18} className="animate-spin" />
                       ) : (
-                        <step.icon size={18} />
+                        <Icon size={18} />
                       )}
                     </span>
                     <span
@@ -144,7 +209,7 @@ const ProcessVideo = () => {
                           : "text-slate-400"
                       }`}
                     >
-                      {step.label}
+                      {label}
                     </span>
                   </li>
                 );

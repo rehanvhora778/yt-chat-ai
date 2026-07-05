@@ -6,6 +6,9 @@ Endpoints that process a YouTube video and generate AI artefacts
 """
 
 import logging
+import threading
+import time
+import uuid
 
 from flask import Blueprint, request, jsonify, g
 
@@ -19,6 +22,169 @@ from utils.helpers import extract_video_id, fetch_video_metadata
 
 video_bp = Blueprint("video", __name__)
 logger = logging.getLogger("video_routes")
+
+# ---------------------------------------------------------------------------
+# Step-by-step processing jobs
+# ---------------------------------------------------------------------------
+# /process-video/start runs the pipeline in a background thread and records
+# which stage it is on, so the frontend can poll /process-video/status/<id>
+# and show real progress instead of an animated guess. Jobs live in memory
+# (single-process server), pruned after _JOB_TTL_SECONDS.
+
+_jobs = {}
+_jobs_lock = threading.Lock()
+_JOB_TTL_SECONDS = 1800
+
+
+def _job_update(job_id, **fields):
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is not None:
+            job.update(fields)
+
+
+def _prune_jobs():
+    cutoff = time.time() - _JOB_TTL_SECONDS
+    with _jobs_lock:
+        for key in [k for k, j in _jobs.items() if j["created"] < cutoff]:
+            del _jobs[key]
+
+
+def _run_processing_job(job_id, video_id, language, user_id):
+    """Worker thread: same pipeline as /process-video, reporting each stage."""
+    try:
+        _job_update(job_id, step="metadata", message="Fetching video details")
+        meta = fetch_video_metadata(video_id)
+
+        _job_update(job_id, step="captions", message="Extracting transcript")
+        source = "captions"
+        try:
+            transcript = transcript_service.fetch_transcript(video_id, language)
+        except TranscriptError as caption_err:
+            _job_update(
+                job_id,
+                step="audio",
+                message="No captions found — transcribing the audio",
+            )
+            try:
+                transcript = audio_service.transcribe_audio(video_id, language)
+                source = "audio"
+            except AudioTranscriptionError as audio_err:
+                _job_update(
+                    job_id,
+                    done=True,
+                    error=f"{caption_err} Audio transcription also "
+                    f"failed: {audio_err}",
+                )
+                return
+
+        _job_update(job_id, step="index", message="Building vector database")
+        chunk_count = vector_service.build_index(video_id, transcript["segments"])
+
+        _job_update(job_id, step="save", message="Saving the processed video")
+        video_doc = video_model.upsert_video(
+            {
+                "video_id": video_id,
+                "title": meta["title"],
+                "url": meta["url"],
+                "author": meta["author"],
+                "thumbnail": meta["thumbnail"],
+                "language": transcript["language"],
+                "transcript": transcript["text"],
+                "segments": transcript["segments"],
+                "transcript_source": source,
+            }
+        )
+        history_model.record_processed(user_id, video_doc, source)
+
+        _job_update(
+            job_id,
+            done=True,
+            step="done",
+            message="Ready",
+            result={
+                "video": video_model.serialize_video(video_doc),
+                "chunks": chunk_count,
+                "transcript_source": source,
+            },
+        )
+    except TranscriptError as exc:
+        _job_update(job_id, done=True, error=str(exc))
+    except Exception as exc:
+        logger.exception("process-video job failed for %s", video_id)
+        _job_update(job_id, done=True, error=f"Failed to process video: {exc}")
+
+
+@video_bp.route("/process-video/start", methods=["POST"])
+@token_required
+def process_video_start():
+    """
+    Kick off processing in the background and return a job id to poll.
+    Already-processed videos short-circuit with {done: true} immediately.
+    """
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    language = (data.get("language") or "en").lower()
+
+    video_id = extract_video_id(url)
+    if not video_id:
+        return jsonify({"error": "Please provide a valid YouTube URL"}), 400
+
+    existing = video_model.find_by_video_id(video_id)
+    if existing and existing.get("segments"):
+        if not vector_service.index_exists(video_id):
+            vector_service.build_index(video_id, existing["segments"])
+        history_model.record_processed(
+            g.user_id, existing, existing.get("transcript_source", "captions")
+        )
+        return jsonify(
+            {
+                "done": True,
+                "video": video_model.serialize_video(existing),
+                "cached": True,
+            }
+        )
+
+    _prune_jobs()
+    job_id = uuid.uuid4().hex
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "user_id": g.user_id,
+            "created": time.time(),
+            "step": "queued",
+            "message": "Starting",
+            "done": False,
+            "error": None,
+            "result": None,
+        }
+    threading.Thread(
+        target=_run_processing_job,
+        args=(job_id, video_id, language, g.user_id),
+        daemon=True,
+    ).start()
+    return jsonify({"job_id": job_id})
+
+
+@video_bp.route("/process-video/status/<job_id>", methods=["GET"])
+@token_required
+def process_video_status(job_id):
+    """Return the live state of a processing job started by this user."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        snapshot = dict(job) if job else None
+    if not snapshot or snapshot["user_id"] != g.user_id:
+        return jsonify({"error": "Job not found"}), 404
+
+    payload = {
+        "step": snapshot["step"],
+        "message": snapshot["message"],
+        "done": snapshot["done"],
+        "error": snapshot["error"],
+    }
+    if snapshot["result"]:
+        payload.update(snapshot["result"])
+        payload["cached"] = False
+    return jsonify(payload)
 
 
 @video_bp.route("/process-video", methods=["POST"])
