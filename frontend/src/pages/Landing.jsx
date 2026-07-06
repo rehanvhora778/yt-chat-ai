@@ -101,7 +101,7 @@ const stack = [
   {
     icon: Server,
     group: "Backend",
-    items: ["Flask", "REST API", "MongoDB Atlas", "JWT auth", "yt-dlp"],
+    items: ["Flask", "REST API", "MongoDB", "JWT auth", "yt-dlp"],
   },
   {
     icon: BrainCircuit,
@@ -122,12 +122,6 @@ const item = {
 };
 
 /* ---------- small building blocks ---------- */
-
-const Timestamp = ({ children }) => (
-  <span className="inline-flex items-center rounded-md bg-brand-500/10 px-1.5 py-0.5 text-xs font-semibold text-brand-600 dark:bg-brand-400/15 dark:text-brand-300">
-    {children}
-  </span>
-);
 
 const SectionHeading = ({ eyebrow, title, sub }) => (
   <div className="mb-12 text-center">
@@ -227,11 +221,9 @@ const Landing = () => {
               </div>
 
               <div className="w-fit max-w-[85%] rounded-2xl rounded-tl-sm bg-white px-4 py-2.5 text-sm text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200">
-                From the lecture: <b>mutual exclusion</b>{" "}
-                <Timestamp>32:10</Timestamp>, <b>hold &amp; wait</b>{" "}
-                <Timestamp>35:42</Timestamp>, <b>no preemption</b>{" "}
-                <Timestamp>39:05</Timestamp> and <b>circular wait</b>{" "}
-                <Timestamp>41:56</Timestamp>. All four conditions must hold
+                From the lecture: <b>mutual exclusion</b>,{" "}
+                <b>hold &amp; wait</b>, <b>no preemption</b> and{" "}
+                <b>circular wait</b>. All four conditions must hold
                 simultaneously — preventing any one of them prevents deadlock.
                 Would you like a quiz on this topic?
               </div>

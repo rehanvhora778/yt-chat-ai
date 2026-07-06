@@ -8,7 +8,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import toast from "react-hot-toast";
-import { User, Mail, Lock, Eye, EyeOff, UserPlus } from "lucide-react";
+import { User, Mail, Lock, Eye, EyeOff, UserPlus, AlertCircle } from "lucide-react";
 
 import { useAuth } from "../context/AuthContext";
 
@@ -24,24 +24,33 @@ const Register = () => {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Shown inline in the form so failures are always visible, even if the
+  // toast layer misbehaves (e.g. stale HMR state in dev).
+  const [formError, setFormError] = useState("");
 
   const handleChange = (e) =>
     setForm({ ...form, [e.target.name]: e.target.value });
 
+  const fail = (message) => {
+    setFormError(message);
+    toast.error(message);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setFormError("");
     const { name, email, password, confirm } = form;
 
     if (!name || !email || !password) {
-      toast.error("Please fill in all fields");
+      fail("Please fill in all fields");
       return;
     }
     if (password.length < 6) {
-      toast.error("Password must be at least 6 characters");
+      fail("Password must be at least 6 characters");
       return;
     }
     if (password !== confirm) {
-      toast.error("Passwords do not match");
+      fail("Passwords do not match");
       return;
     }
 
@@ -53,7 +62,7 @@ const Register = () => {
       toast.success("Account created successfully!");
       navigate("/dashboard", { replace: true });
     } else {
-      toast.error(result.error);
+      fail(result.error || "Registration failed. Please try again.");
     }
   };
 
@@ -157,6 +166,13 @@ const Register = () => {
               />
             </div>
           </div>
+
+          {formError && (
+            <div className="flex items-start gap-2 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              <span>{formError}</span>
+            </div>
+          )}
 
           <button
             type="submit"
