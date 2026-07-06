@@ -6,8 +6,7 @@
  */
 
 import { lazy, Suspense } from "react";
-import { Routes, Route, useLocation } from "react-router-dom";
-import { AnimatePresence } from "framer-motion";
+import { Routes, Route } from "react-router-dom";
 
 import Navbar from "./components/Navbar";
 import ParticlesBackground from "./components/ParticlesBackground";
@@ -19,7 +18,7 @@ import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 
-// Heavier authenticated pages are code-split (Recharts, docx, jsPDF)
+// Heavier authenticated pages are code-split (Recharts, docx)
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const ProcessVideo = lazy(() => import("./pages/ProcessVideo"));
 const Chat = lazy(() => import("./pages/Chat"));
@@ -28,8 +27,6 @@ const Profile = lazy(() => import("./pages/Profile"));
 const Analytics = lazy(() => import("./pages/Analytics"));
 
 const App = () => {
-  const location = useLocation();
-
   return (
     <div className="relative flex min-h-screen flex-col">
       <ParticlesBackground />
@@ -43,8 +40,11 @@ const App = () => {
             </div>
           }
         >
-        <AnimatePresence mode="wait">
-          <Routes location={location} key={location.pathname}>
+          {/* NOTE: no AnimatePresence here on purpose. Wrapping Routes in
+              AnimatePresence mode="wait" deadlocks when two navigations race
+              (e.g. logout = ProtectedRoute redirect + navigate("/")), leaving
+              every page after that blank. Pages animate themselves in. */}
+          <Routes>
             {/* Public */}
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
@@ -103,7 +103,6 @@ const App = () => {
             {/* Fallback */}
             <Route path="*" element={<Landing />} />
           </Routes>
-        </AnimatePresence>
         </Suspense>
       </main>
     </div>
