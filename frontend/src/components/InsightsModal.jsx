@@ -13,8 +13,9 @@ import { X, FileText, ListChecks, Download } from "lucide-react";
 
 import Loader from "./Loader";
 import MarkdownRenderer from "./MarkdownRenderer";
+import InsightsPrintDocument from "./InsightsPrintDocument";
 import { videoApi, getErrorMessage } from "../api/client";
-import { exportSummaryToPdf, exportKeyPointsToPdf } from "../utils/exportPdf";
+import { usePrintExport } from "../lib/printExport";
 
 const TITLES = {
   summary: { label: "Summary", icon: FileText },
@@ -25,6 +26,7 @@ const InsightsModal = ({ type, videoId, videoTitle, language, onClose }) => {
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState("");
   const [keyPoints, setKeyPoints] = useState([]);
+  const { printing, startPrint } = usePrintExport();
 
   useEffect(() => {
     let cancelled = false;
@@ -60,12 +62,21 @@ const InsightsModal = ({ type, videoId, videoTitle, language, onClose }) => {
       toast.error("Nothing to download yet");
       return;
     }
-    if (type === "summary") exportSummaryToPdf(videoTitle, summary);
-    else exportKeyPointsToPdf(videoTitle, keyPoints);
-    toast.success("PDF downloaded");
+    // Browser "Save as PDF": premium layout + full Unicode (Hindi/CJK/emoji).
+    startPrint();
   };
 
   return (
+    <>
+      {printing && (
+        <InsightsPrintDocument
+          kind={type}
+          videoTitle={videoTitle}
+          summary={summary}
+          keyPoints={keyPoints}
+        />
+      )}
+
     <AnimatePresence>
       {/* Backdrop */}
       <motion.div
@@ -142,6 +153,7 @@ const InsightsModal = ({ type, videoId, videoTitle, language, onClose }) => {
         </div>
       </motion.aside>
     </AnimatePresence>
+    </>
   );
 };
 

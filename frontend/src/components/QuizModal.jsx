@@ -21,10 +21,13 @@ import {
   XCircle,
   RotateCcw,
   Trophy,
+  Download,
 } from "lucide-react";
 
 import Loader from "./Loader";
+import QuizPrintDocument from "./QuizPrintDocument";
 import { quizApi, getErrorMessage } from "../api/client";
+import { usePrintExport } from "../lib/printExport";
 
 const COUNTS = [5, 8, 10];
 const DIFFICULTIES = [
@@ -50,6 +53,7 @@ const QuizModal = ({ videoId, videoTitle, language, onClose }) => {
   const [current, setCurrent] = useState(0);
   const [answers, setAnswers] = useState([]); // picked option index per question
   const [result, setResult] = useState(null); // {score,total,percentage,results}
+  const { printing, startPrint } = usePrintExport();
 
   // Past attempts for this video (best-effort; failures are silent)
   useEffect(() => {
@@ -117,6 +121,15 @@ const QuizModal = ({ videoId, videoTitle, language, onClose }) => {
   const progress = quiz ? ((current + 1) / quiz.questions.length) * 100 : 0;
 
   return (
+    <>
+      {printing && result && (
+        <QuizPrintDocument
+          videoTitle={videoTitle}
+          difficulty={difficulty}
+          result={result}
+        />
+      )}
+
     <AnimatePresence>
       {/* Backdrop */}
       <motion.div
@@ -148,12 +161,24 @@ const QuizModal = ({ videoId, videoTitle, language, onClose }) => {
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-          >
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-1">
+            {phase === "results" && result && (
+              <button
+                onClick={startPrint}
+                title="Download as PDF"
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm font-medium text-brand-600 hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-brand-500/10"
+              >
+                <Download size={17} />
+                <span className="hidden sm:inline">PDF</span>
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -403,6 +428,7 @@ const QuizModal = ({ videoId, videoTitle, language, onClose }) => {
         </div>
       </motion.aside>
     </AnimatePresence>
+    </>
   );
 };
 

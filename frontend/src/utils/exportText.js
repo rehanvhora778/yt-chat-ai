@@ -31,10 +31,9 @@ const strip = (s) =>
 // Chat
 // --------------------------------------------------------------------------- //
 export const exportChatToTxt = (videoTitle, messages) => {
-  let out = `YT Chat GenAI — Conversation\n${videoTitle || ""}\n`;
-  out += `Exported ${new Date().toLocaleString()}\n${"=".repeat(50)}\n\n`;
+  let out = `YT Chat GenAI — Conversation\n${videoTitle || ""}\n${"=".repeat(50)}\n\n`;
   messages.forEach((m) => {
-    out += `${m.role === "user" ? "YOU" : "AI ASSISTANT"}:\n`;
+    out += `${m.role === "user" ? "QUESTION" : "ANSWER"}:\n`;
     out += `${strip(m.content)}\n\n`;
   });
   saveAs(
@@ -47,15 +46,6 @@ export const exportChatToDocx = (videoTitle, messages) => {
   const children = [
     new Paragraph({ text: "YT Chat GenAI — Conversation", heading: HeadingLevel.TITLE }),
     new Paragraph({ text: videoTitle || "", heading: HeadingLevel.HEADING_2 }),
-    new Paragraph({
-      children: [
-        new TextRun({
-          text: `Exported ${new Date().toLocaleString()}`,
-          italics: true,
-          color: "888888",
-        }),
-      ],
-    }),
     new Paragraph({ text: "" }),
   ];
 
@@ -64,7 +54,7 @@ export const exportChatToDocx = (videoTitle, messages) => {
       new Paragraph({
         children: [
           new TextRun({
-            text: m.role === "user" ? "You" : "AI Assistant",
+            text: m.role === "user" ? "Question" : "Answer",
             bold: true,
             color: m.role === "user" ? "4F46E5" : "9333EA",
           }),
