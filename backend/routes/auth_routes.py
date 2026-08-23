@@ -3,10 +3,21 @@ routes/auth_routes.py
 ---------------------
 Registration, login and "who am I" endpoints using JWT authentication.
 
-Signup is two-step: /register validates the details and emails a one-time code
-but creates NOTHING; /verify-otp checks the code and only then inserts the user.
-An abandoned signup therefore leaves no half-made account behind, and an address
-can never be registered without the person proving they can read its inbox.
+There are two ways in:
+
+  * Email + password. Two-step: /register validates the details and emails a
+    one-time code but creates NOTHING; /verify-otp checks the code and only
+    then inserts the user. An abandoned signup leaves no half-made account
+    behind, and an address can never be registered without the person proving
+    they can read its inbox.
+
+  * Google. /google takes the ID token from "Sign in with Google" and signs in
+    or registers in a single call. There is no code to email: Google only
+    issues a token for an address it has already verified, so demanding an OTP
+    on top would prove nothing and just add a step.
+
+Both routes end at the same place — _auth_payload — so the rest of the app
+never has to care which one was used.
 """
 
 import re
@@ -19,6 +30,7 @@ from config import Config
 from models import user as user_model
 from models import otp as otp_model
 from services.email_service import EmailError, send_otp_email
+from services.google_auth_service import GoogleAuthError, verify_google_token
 from utils.auth import generate_token, token_required
 
 auth_bp = Blueprint("auth", __name__)
@@ -92,7 +104,18 @@ def register():
         return jsonify({"error": "Password must be at least 6 characters"}), 400
 
     try:
-        if user_model.find_by_email(email):
+        existing = user_model.find_by_email(email)
+        if existing and not user_model.has_password(existing):
+            return (
+                jsonify(
+                    {
+                        "error": "This email is already registered with Google. "
+                        "Use the Continue with Google button to sign in."
+                    }
+                ),
+                409,
+            )
+        if existing:
             return jsonify({"error": "An account with this email already exists"}), 409
 
         # Hash now so the plaintext password is never held in the otps document.
@@ -201,6 +224,21 @@ def login():
 
     try:
         user = user_model.find_by_email(email)
+
+        # Naming the real problem here leaks nothing: whoever is typing already
+        # supplied the address, and "invalid password" for an account that has
+        # no password is a dead end they cannot reason their way out of.
+        if user and not user_model.has_password(user):
+            return (
+                jsonify(
+                    {
+                        "error": "This account was created with Google. "
+                        "Use the Continue with Google button to sign in."
+                    }
+                ),
+                409,
+            )
+
         if not user or not user_model.verify_password(user, password):
             return jsonify({"error": "Invalid email or password"}), 401
 
@@ -218,6 +256,60 @@ def login():
         return jsonify({"error": str(exc)}), 503
     except Exception as exc:
         return jsonify({"error": f"Login failed: {exc}"}), 500
+
+
+@auth_bp.route("/google", methods=["POST"])
+def google_sign_in():
+    """
+    Sign in or register from a Google ID token. One endpoint for both, because
+    the client cannot know which it is: whether this Google account has been
+    here before is a question only the database can answer.
+    """
+    data = request.get_json(silent=True) or {}
+    credential = (data.get("credential") or "").strip()
+
+    try:
+        profile = verify_google_token(credential)
+    except GoogleAuthError as exc:
+        return jsonify({"error": exc.message}), exc.status
+
+    try:
+        # 1. Seen this Google account before - straight in.
+        user = user_model.find_by_google_id(profile["google_id"])
+        if user:
+            return jsonify(_auth_payload(user, "Login successful"))
+
+        # 2. The address already has a password account. Link them rather than
+        #    failing on the unique email index: Google has proven this person
+        #    controls the address, which is the same thing the emailed code
+        #    proves, so refusing here would lock someone out of their own
+        #    account for using a different button.
+        existing = user_model.find_by_email(profile["email"])
+        if existing:
+            user = user_model.link_google_account(
+                existing["_id"], profile["google_id"], profile["picture"]
+            )
+            return jsonify(_auth_payload(user, "Login successful"))
+
+        # 3. Brand new - register on the spot.
+        user = user_model.create_google_user(
+            profile["name"], profile["email"],
+            profile["google_id"], profile["picture"],
+        )
+        # A half-finished password signup for this address is now moot.
+        otp_model.clear_for(profile["email"], PURPOSE_REGISTER)
+        return jsonify(_auth_payload(user, "Registration successful")), 201
+
+    except DuplicateKeyError:
+        # Two tabs raced through step 3. Whichever lost re-reads the winner.
+        user = user_model.find_by_email(profile["email"])
+        if user:
+            return jsonify(_auth_payload(user, "Login successful"))
+        return jsonify({"error": "An account with this email already exists"}), 409
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 503
+    except Exception as exc:
+        return jsonify({"error": f"Google sign-in failed: {exc}"}), 500
 
 
 @auth_bp.route("/me", methods=["GET"])

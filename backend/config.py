@@ -73,6 +73,18 @@ class Config:
     # Groq Whisper used to transcribe videos without captions (free).
     GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3")
 
+    # ---- Google Sign-In ----
+    # OAuth 2.0 Web client ID from Google Cloud Console. NOT a secret - it is
+    # visible in the frontend bundle - but the backend needs it too, because
+    # every ID token is verified against it as the expected audience. Without
+    # that check any valid Google token, minted for any other site, would be
+    # accepted here. Blank disables Google sign-in end to end.
+    GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+
+    @classmethod
+    def google_auth_enabled(cls):
+        return bool(cls.GOOGLE_CLIENT_ID)
+
     # ---- Google Gemini ----
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
     # gemini-2.5-flash-lite has a higher free-tier quota than 2.5-flash on this

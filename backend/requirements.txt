@@ -29,6 +29,9 @@ langchain==0.2.16
 langchain-community==0.2.16
 langchain-google-genai==1.0.10
 google-generativeai==0.7.2
+# Verifies Google Sign-In ID tokens. Comes in via google-generativeai anyway,
+# pinned here because auth depends on it directly.
+google-auth==2.55.0
 
 # Groq — free, high-limit LLM (preferred over Gemini) + Whisper audio.
 # Pinned to the 0.1.x line for langchain-core 0.2.x compatibility; newer

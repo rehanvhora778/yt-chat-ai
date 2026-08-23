@@ -81,6 +81,23 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  /**
+   * Sign in or register from a Google ID token.
+   *
+   * Never returns otpRequired: Google only issues a token for an address it
+   * has already verified, so there is nothing left for an emailed code to
+   * prove. settle() still handles the response so the session is stored the
+   * same way as every other route.
+   */
+  const loginWithGoogle = async (credential) => {
+    try {
+      const res = await authApi.google(credential);
+      return settle(res.data);
+    } catch (error) {
+      return { success: false, error: getErrorMessage(error) };
+    }
+  };
+
   /** Finish a pending signup/login by submitting the emailed code. */
   const verifyOtp = async (email, code, purpose = "register") => {
     try {
@@ -114,6 +131,7 @@ export const AuthProvider = ({ children }) => {
         loading,
         login,
         register,
+        loginWithGoogle,
         verifyOtp,
         resendOtp,
         logout,

@@ -37,6 +37,12 @@ def init_db():
 
         # Indexes -------------------------------------------------------
         _db.users.create_index([("email", ASCENDING)], unique=True)
+        # Sparse: only documents that actually have a google_id are indexed.
+        # A plain unique index would treat every password-only account as
+        # holding the same missing value and reject all but the first.
+        _db.users.create_index(
+            [("google_id", ASCENDING)], unique=True, sparse=True
+        )
         _db.videos.create_index([("video_id", ASCENDING)], unique=True)
         # OTPs: compound lookup, plus a TTL index so expired codes are
         # reaped by MongoDB itself rather than lingering as stale secrets.

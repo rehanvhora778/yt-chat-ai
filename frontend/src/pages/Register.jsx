@@ -12,9 +12,10 @@ import { User, Mail, Lock, Eye, EyeOff, UserPlus, AlertCircle } from "lucide-rea
 
 import { useAuth } from "../context/AuthContext";
 import OtpForm from "../components/OtpForm";
+import GoogleButton from "../components/GoogleButton";
 
 const Register = () => {
-  const { register } = useAuth();
+  const { register, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
 
   const [form, setForm] = useState({
@@ -37,6 +38,22 @@ const Register = () => {
   const fail = (message) => {
     setFormError(message);
     toast.error(message);
+  };
+
+  // No OTP on this path on purpose: the emailed code exists to prove the
+  // person owns the address, and a Google token already proves exactly that.
+  const handleGoogle = async (credential) => {
+    setFormError("");
+    setLoading(true);
+    const result = await loginWithGoogle(credential);
+    setLoading(false);
+
+    if (result.success) {
+      toast.success("Welcome to YT Chat GenAI!");
+      navigate("/dashboard", { replace: true });
+    } else {
+      fail(result.error || "Google sign-up failed. Please try again.");
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -214,6 +231,14 @@ const Register = () => {
             )}
           </button>
         </form>
+
+        <div className="mt-5">
+          <GoogleButton
+            onCredential={handleGoogle}
+            disabled={loading}
+            text="signup_with"
+          />
+        </div>
 
         <p className="mt-6 text-center text-sm text-muted">
           Already have an account?{" "}

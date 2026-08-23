@@ -90,6 +90,9 @@ export const authApi = {
   // Two-step signup: /register emails a code, these finish or re-send it.
   verifyOtp: (payload) => api.post("/auth/verify-otp", payload),
   resendOtp: (payload) => api.post("/auth/resend-otp", payload),
+  // One endpoint for both: only the server can know whether this Google
+  // account has been here before.
+  google: (credential) => api.post("/auth/google", { credential }),
   me: () => api.get("/auth/me"),
 };
 

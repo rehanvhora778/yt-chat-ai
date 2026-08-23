@@ -68,6 +68,10 @@ def create_app() -> Flask:
                 "provider": "groq" if groq else "gemini",
                 "model": Config.GROQ_MODEL if groq else Config.GEMINI_MODEL,
                 "fallback_model": Config.GROQ_FALLBACK_MODEL if groq else None,
+                # Lets the frontend confirm both halves of Google sign-in are
+                # configured — the client id has to be set here AND in the
+                # Vercel build, and only one of them being set is silent.
+                "google_auth": Config.google_auth_enabled(),
             }
         )
 

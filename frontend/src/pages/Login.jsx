@@ -12,9 +12,10 @@ import { AlertCircle, Eye, EyeOff, Lock, LogIn, Mail } from "lucide-react";
 
 import { useAuth } from "../context/AuthContext";
 import OtpForm from "../components/OtpForm";
+import GoogleButton from "../components/GoogleButton";
 
 const Login = () => {
-  const { login } = useAuth();
+  const { login, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const redirectTo = location.state?.from?.pathname || "/dashboard";
@@ -35,6 +36,22 @@ const Login = () => {
   const fail = (message) => {
     setFormError(message);
     toast.error(message);
+  };
+
+  // Google verifies the address before issuing the token, so this path never
+  // reaches the OTP step — it either signs in or fails.
+  const handleGoogle = async (credential) => {
+    setFormError("");
+    setLoading(true);
+    const result = await loginWithGoogle(credential);
+    setLoading(false);
+
+    if (result.success) {
+      toast.success("Welcome back!");
+      navigate(redirectTo, { replace: true });
+    } else {
+      fail(result.error || "Google sign-in failed. Please try again.");
+    }
   };
 
   const handleSubmit = async (event) => {
@@ -162,6 +179,14 @@ const Login = () => {
             )}
           </button>
         </form>
+
+        <div className="mt-5">
+          <GoogleButton
+            onCredential={handleGoogle}
+            disabled={loading}
+            text="signin_with"
+          />
+        </div>
 
         <p className="mt-6 text-center text-sm text-muted">
           Don't have an account?{" "}
