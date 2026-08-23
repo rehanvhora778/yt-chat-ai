@@ -72,6 +72,15 @@ def create_app() -> Flask:
                 # configured — the client id has to be set here AND in the
                 # Vercel build, and only one of them being set is silent.
                 "google_auth": Config.google_auth_enabled(),
+                # Echoed back because a CORS rejection is invisible from the
+                # browser — it reports a blocked request identically to a dead
+                # server — and invisible in the logs, since the request was
+                # served fine. Seeing the configured list is the difference
+                # between diagnosing this in seconds and guessing at it.
+                # Allowed origins are not secret; any browser can discover
+                # them by trying.
+                "cors_origins": Config.CORS_ORIGINS,
+                "cors_origin_regex": Config.CORS_ORIGIN_REGEX or None,
             }
         )
 

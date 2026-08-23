@@ -170,12 +170,19 @@ class Config:
     # Exact origins allowed to call the API, comma separated. In production
     # this must contain the deployed frontend origin (e.g. the Vercel domain);
     # a trailing slash is not part of an origin and is stripped.
+    # Quotes are stripped as well as whitespace and the trailing slash: a
+    # value pasted into a dashboard as "https://site.com" arrives with the
+    # quote characters inside the string, and an origin that differs by one
+    # character matches nothing while looking completely correct in the UI.
     CORS_ORIGINS = [
-        origin.strip().rstrip("/")
-        for origin in os.getenv(
-            "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
-        ).split(",")
-        if origin.strip()
+        cleaned
+        for cleaned in (
+            origin.strip().strip('"').strip("'").strip().rstrip("/")
+            for origin in os.getenv(
+                "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+            ).split(",")
+        )
+        if cleaned and not cleaned.startswith("#")
     ]
     # Optional regex for origins that cannot be listed one by one. Vercel gives
     # every preview deployment its own hostname, so allowing them needs a
