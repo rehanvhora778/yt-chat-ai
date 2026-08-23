@@ -25,6 +25,35 @@ _DEV_SECRET_KEY = "dev-secret-key"
 _DEV_JWT_SECRET = "dev-jwt-secret"
 
 
+def _normalise_origin(raw: str) -> str:
+    """
+    Clean one configured origin into the exact form a browser sends.
+
+    A browser's Origin header is always scheme + host (+ port) with no path and
+    no trailing slash, and it must match character for character. Every kind of
+    near-miss a dashboard field invites therefore matches nothing while looking
+    perfectly correct in the UI, and fails invisibly — the browser reports a
+    blocked request the same as an unreachable server, and the server logs a
+    normal 200. So the near-misses are corrected here:
+
+        "https://site.com"      quotes from a copied string literal
+        https://site.com/       trailing slash from a browser address bar
+        site.com                no scheme, the easiest one to overlook
+        # a comment             a line carried along by a bulk paste
+    """
+    origin = (raw or "").strip().strip('"').strip("'").strip().rstrip("/")
+    if not origin or origin.startswith("#"):
+        return ""
+    if "://" not in origin:
+        # Bare host. Local development is plain HTTP; anything else deployed is
+        # HTTPS, and guessing http:// for a public host would be both wrong and
+        # a downgrade.
+        host = origin.split(":", 1)[0].lower()
+        local = host in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
+        origin = ("http://" if local else "https://") + origin
+    return origin
+
+
 def _resolve(path: str) -> str:
     """Absolute path, resolved against the backend folder when relative."""
     return path if os.path.isabs(path) else os.path.join(BASE_DIR, path)
@@ -175,14 +204,11 @@ class Config:
     # quote characters inside the string, and an origin that differs by one
     # character matches nothing while looking completely correct in the UI.
     CORS_ORIGINS = [
-        cleaned
-        for cleaned in (
-            origin.strip().strip('"').strip("'").strip().rstrip("/")
-            for origin in os.getenv(
-                "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
-            ).split(",")
-        )
-        if cleaned and not cleaned.startswith("#")
+        _normalise_origin(origin)
+        for origin in os.getenv(
+            "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+        ).split(",")
+        if _normalise_origin(origin)
     ]
     # Optional regex for origins that cannot be listed one by one. Vercel gives
     # every preview deployment its own hostname, so allowing them needs a
