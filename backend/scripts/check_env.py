@@ -91,6 +91,14 @@ def check_mongo():
                f"connected; database '{target}' {where}. "
                f"Databases in this cluster: {', '.join(names) or '(none yet)'}")
         _report_cluster_region(uri)
+        # A successful connect from here only proves THIS machine's IP is
+        # allowed. Render dials in from a completely different address, and
+        # that difference is the most common cause of a deploy that builds
+        # fine and then cannot reach the database.
+        report("  network access", SKIP,
+               "this machine can reach the cluster - that does NOT prove Render "
+               "can. Atlas > Network Access must list 0.0.0.0/0, because Render's "
+               "free plan has no fixed outbound IP")
     except ConfigurationError as exc:
         report("MongoDB", FAIL, f"malformed URI - {exc}",
                "If the password contains @ : / ? # [ ] %, percent-encode it "
@@ -117,44 +125,158 @@ _RENDER_REGION = {
 }
 
 
-def _report_cluster_region(uri):
-    """
-    Work out where the cluster physically lives, so render.yaml can match it.
-
-    Atlas does not put the region in the URI, but the shard hosts resolve to
-    EC2 addresses whose reverse DNS names carry it.
-    """
+def _cluster_ip(uri):
+    """First shard IP behind an Atlas SRV URI, or None."""
     import re
     import socket
 
     host_match = re.search(r"@([^/?,]+)", uri)
     if not host_match:
-        return
+        return None
     host = host_match.group(1).split(":")[0]
-
     try:
         import dns.resolver
-        targets = [str(r.target).rstrip(".")
-                   for r in dns.resolver.resolve("_mongodb._tcp." + host, "SRV")]
-    except Exception:
-        return
+    except ImportError:
+        return None
 
-    for node in targets[:3]:
+    res = dns.resolver.Resolver()
+    # Atlas shard names sometimes fail on a local/ISP resolver; ask a public one.
+    res.nameservers = ["8.8.8.8", "1.1.1.1"]
+    res.timeout, res.lifetime = 6, 10
+    try:
+        targets = [str(r.target).rstrip(".")
+                   for r in res.resolve("_mongodb._tcp." + host, "SRV")]
+    except Exception:
+        return None
+    for node in targets:
         try:
-            rdns = socket.gethostbyaddr(socket.gethostbyname(node))[0]
+            return str(res.resolve(node, "A")[0])
         except Exception:
             continue
-        aws = re.search(r"((?:us|eu|ap|sa|ca|me|af)-[a-z]+-\d)", rdns)
-        if not aws:
-            continue
-        region = aws.group(1)
-        pick = next((v for k, v in _RENDER_REGION.items() if region.startswith(k)),
-                    "oregon")
+    return None
+
+
+def _locate_ip(ip):
+    """
+    Where an IP physically is, as (label, hint) - or None.
+
+    Tried in order: AWS's published ranges, then the geofeed advertised in the
+    netblock's RDAP record. Atlas shared clusters sit on MongoDB's own AS,
+    which has no PTR records, so RDAP + geofeed is the path that works there.
+    """
+    import ipaddress
+
+    try:
+        import requests
+    except ImportError:
+        return None
+    addr = ipaddress.ip_address(ip)
+
+    try:
+        for p in requests.get("https://ip-ranges.amazonaws.com/ip-ranges.json",
+                              timeout=25).json()["prefixes"]:
+            if addr in ipaddress.ip_network(p["ip_prefix"]):
+                return p["region"], "AWS"
+    except Exception:
+        pass
+
+    try:
+        rdap = requests.get(f"https://rdap.org/ip/{ip}", timeout=25,
+                            headers={"Accept": "application/rdap+json"}).json()
+        feed = None
+        for rem in rdap.get("remarks", []):
+            for line in rem.get("description", []):
+                if "geofeed" in line.lower() and "http" in line:
+                    feed = line.split("http", 1)[1]
+                    feed = "http" + feed.split()[0]
+        if not feed:
+            return None
+        for line in requests.get(feed, timeout=30).text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(",")
+            try:
+                net = ipaddress.ip_network(parts[0], strict=False)
+            except ValueError:
+                continue
+            if addr in net:
+                city = parts[3] if len(parts) > 3 else ""
+                country = parts[1] if len(parts) > 1 else ""
+                return f"{city or country}".strip(), country
+    except Exception:
+        pass
+    return None
+
+
+# Country / AWS region -> the nearest of Render's five regions.
+_TO_RENDER = {
+    "IN": "singapore", "SG": "singapore", "JP": "singapore", "AU": "singapore",
+    "HK": "singapore", "KR": "singapore", "ID": "singapore", "MY": "singapore",
+    "TH": "singapore", "PH": "singapore", "VN": "singapore", "TW": "singapore",
+    "AE": "frankfurt", "IL": "frankfurt", "ZA": "frankfurt",
+    "DE": "frankfurt", "FR": "frankfurt", "GB": "frankfurt", "IE": "frankfurt",
+    "NL": "frankfurt", "IT": "frankfurt", "ES": "frankfurt", "SE": "frankfurt",
+    "CH": "frankfurt", "PL": "frankfurt", "BE": "frankfurt",
+    "US": "oregon", "CA": "ohio", "BR": "virginia",
+}
+_AWS_TO_RENDER = {
+    "us-west": "oregon", "us-east": "virginia", "ca-": "ohio", "sa-": "virginia",
+    "eu-": "frankfurt", "me-": "frankfurt", "af-": "frankfurt", "ap-": "singapore",
+}
+
+
+def _report_cluster_region(uri):
+    """
+    Work out where the cluster lives, so render.yaml's region can match it.
+
+    Worth the network calls: a Render service's region is fixed at creation,
+    and a mismatch adds hundreds of milliseconds to every database call.
+    """
+    ip = _cluster_ip(uri)
+    if not ip:
+        return report("  cluster region", SKIP,
+                      "could not resolve the shard hosts; check the cluster card "
+                      "in the Atlas dashboard")
+
+    located = _locate_ip(ip)
+    if not located:
+        return report("  cluster region", SKIP,
+                      f"cluster is at {ip}, but its location could not be determined")
+
+    label, hint = located
+    pick = next((v for k, v in _AWS_TO_RENDER.items() if label.startswith(k)), None)
+    if pick is None:
+        pick = _TO_RENDER.get(hint.upper(), "oregon")
+
+    configured = _render_yaml_region()
+    if configured and configured != pick:
+        report("  cluster region", FAIL,
+               f"cluster is in {label} -> nearest Render region is '{pick}', "
+               f"but render.yaml says '{configured}'",
+               "Fix render.yaml BEFORE creating the service. A Render service's "
+               "region cannot be changed afterwards - you would have to delete it "
+               "and start over.")
+    else:
         report("  cluster region", PASS,
-               f"{region} -> set 'region: {pick}' in render.yaml")
-        return
-    report("  cluster region", SKIP, "could not determine it from DNS; "
-           "check the cluster card in the Atlas dashboard")
+               f"{label} -> render.yaml region '{pick}'"
+               + (" (matches)" if configured else ""))
+
+
+def _render_yaml_region():
+    """The region currently set in render.yaml, if it can be read."""
+    import os
+    import re
+
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "render.yaml")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            m = re.search(r"^\s*region:\s*(\w+)", fh.read(), re.M)
+            return m.group(1) if m else None
+    except OSError:
+        return None
 
 
 # --------------------------------------------------------------------------
