@@ -1,34 +1,33 @@
 /**
  * components/Footer.jsx
  * ---------------------
- * Simple footer used across public pages.
+ * Footer for the public pages.
  */
 
-import { Youtube, Github, Heart } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Github, Heart, Youtube } from "lucide-react";
 
 const Footer = () => (
-  <footer className="mt-20 border-t border-slate-200 py-8 dark:border-slate-800">
-    <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 text-sm text-slate-500 dark:text-slate-400 sm:flex-row">
-      <div className="flex items-center gap-2">
-        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-brand-600 to-purple-600 text-white">
-          <Youtube size={15} />
+  <footer className="border-t border-line">
+    <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-4 px-4 py-7 text-sm text-muted sm:flex-row sm:px-6">
+      <Link to="/" className="flex items-center gap-2">
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-white">
+          <Youtube size={14} />
         </span>
-        <span className="font-semibold text-slate-700 dark:text-slate-200">
-          YT Chat GenAI
-        </span>
-      </div>
+        <span className="font-semibold text-ink">YT Chat GenAI</span>
+      </Link>
 
-      <p className="flex items-center gap-1">
-        Built with <Heart size={14} className="text-pink-500" /> by Rayhan Vora
+      <p className="flex items-center gap-1.5 text-xs">
+        Built with <Heart size={13} className="text-accent" /> by Rayhan Vora
       </p>
 
       <a
         href="https://github.com"
         target="_blank"
         rel="noreferrer"
-        className="flex items-center gap-1.5 transition-colors hover:text-brand-600 dark:hover:text-brand-300"
+        className="flex items-center gap-1.5 text-xs transition-colors hover:text-accent"
       >
-        <Github size={16} /> Source
+        <Github size={15} /> Source
       </a>
     </div>
   </footer>

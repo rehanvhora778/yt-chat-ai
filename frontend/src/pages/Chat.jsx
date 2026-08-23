@@ -1,25 +1,31 @@
 /**
  * pages/Chat.jsx
  * --------------
- * ChatGPT-style interface for talking to a processed video. Loads existing
- * history, sends questions to the RAG backend, shows a typing indicator and
- * auto-scrolls. Provides quick actions for Summary / Key Points and a
- * "Download PDF" export of the conversation.
+ * The conversation view for a processed video: loads existing history, sends
+ * questions to the RAG backend and offers Summary / Key Points / Quiz plus
+ * PDF, DOCX and TXT exports.
+ *
+ * It also honours the Settings → Preferences options (send key, starter
+ * prompts, follow-new-answers) and supports deep links used elsewhere in the
+ * app: ?insight=summary|keypoints and ?export=pdf|docx|txt.
  */
 
-import { useEffect, useRef, useState } from "react";
-import { useParams, useLocation, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useParams, useLocation, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import toast from "react-hot-toast";
 import {
-  Send,
-  FileText,
-  ListChecks,
-  Download,
   ArrowLeft,
+  Bookmark,
+  BookmarkCheck,
+  Download,
   ExternalLink,
-  ChevronDown,
+  FileText,
+  FolderPlus,
   GraduationCap,
+  ListChecks,
+  MoreVertical,
+  Send,
+  Sparkles,
 } from "lucide-react";
 
 import ChatBubble from "../components/ChatBubble";
@@ -27,37 +33,66 @@ import TypingIndicator from "../components/TypingIndicator";
 import Loader from "../components/Loader";
 import InsightsModal from "../components/InsightsModal";
 import QuizModal from "../components/QuizModal";
+import PrintDocument from "../components/PrintDocument";
+import CollectionFormModal from "../components/CollectionFormModal";
+import { Menu, MenuDivider, MenuItem, MenuLabel } from "../components/ui/Menu";
+import { SegmentedControl } from "../components/ui";
 import { chatApi, videoApi, getErrorMessage } from "../api/client";
 import { exportChatToTxt, exportChatToDocx } from "../utils/exportText";
-import PrintDocument from "../components/PrintDocument";
-import { usePrintExport } from "../lib/printExport";
+import { usePrintExport, suggestPdfName } from "../lib/printExport";
+import PdfNameModal from "../components/PdfNameModal";
+import PdfExportOverlay from "../components/PdfExportOverlay";
+import { useAuth } from "../context/AuthContext";
+import { useLibrary } from "../context/LibraryContext";
+import { usePreferences } from "../context/PreferencesContext";
+import { useWorkspace } from "../context/WorkspaceContext";
+import { useStored } from "../lib/store";
+import { useNotify } from "../lib/notify";
 
 const SUGGESTIONS = [
   "Summarize this video in 3 points",
   "What are the main takeaways?",
   "Explain the most important concept",
+  "What should I remember from this?",
 ];
 
 const Chat = () => {
   const { videoId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const notify = useNotify();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const { user } = useAuth();
+  const { preferences } = usePreferences();
+  const { refresh } = useWorkspace();
+  const {
+    collections,
+    isVideoBookmarked,
+    toggleVideoBookmark,
+    toggleVideoInCollection,
+    addAnswerBookmark,
+  } = useLibrary();
 
   const [video, setVideo] = useState(location.state?.video || null);
   const [messages, setMessages] = useState([]); // {role, content}
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [loadingPage, setLoadingPage] = useState(true);
-  const [language, setLanguage] = useState("en");
+  const [language, setLanguage] = useState(preferences.language);
   const [insight, setInsight] = useState(null); // 'summary' | 'keypoints'
   const [quizOpen, setQuizOpen] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
+  const [collectionOpen, setCollectionOpen] = useState(false);
   const { printing, startPrint } = usePrintExport();
+  const [pdfNameOpen, setPdfNameOpen] = useState(false);
+
+  const [, setRecentViews] = useStored(user?.id || "guest", "recent_views", []);
 
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
+  const exportHandled = useRef(false);
 
-  // ---- Initial load: video meta (if missing) + chat history ----
+  /* ---- Initial load: video meta (if missing) + chat history ---- */
   useEffect(() => {
     let cancelled = false;
 
@@ -81,12 +116,12 @@ const Chat = () => {
         const msgs = [];
         hist.forEach((c) => {
           msgs.push({ role: "user", content: c.question });
-          msgs.push({ role: "ai", content: c.answer });
+          msgs.push({ role: "ai", content: c.answer, question: c.question });
         });
         setMessages(msgs);
-        if (hist.length) setLanguage(hist[hist.length - 1].language || "en");
+        if (hist.length) setLanguage(hist[hist.length - 1].language || preferences.language);
       })
-      .catch((err) => toast.error(getErrorMessage(err)))
+      .catch((err) => notify.error(getErrorMessage(err)))
       .finally(() => !cancelled && setLoadingPage(false));
 
     return () => {
@@ -95,10 +130,60 @@ const Chat = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoId]);
 
-  // ---- Auto-scroll to newest message ----
+  /* ---- Remember this video in "recently viewed" ---- */
   useEffect(() => {
+    if (!videoId) return;
+    setRecentViews((list) => [videoId, ...(list || []).filter((id) => id !== videoId)].slice(0, 12));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoId]);
+
+  /* ---- Auto-scroll to newest message (preference-controlled) ---- */
+  useEffect(() => {
+    if (!preferences.autoScroll) return;
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, sending]);
+  }, [messages, sending, preferences.autoScroll]);
+
+  const handleExport = useCallback(
+    (fmt) => {
+      if (messages.length === 0) {
+        notify.error("No conversation to export yet");
+        return;
+      }
+      if (fmt === "pdf") {
+        // Browser "Save as PDF": premium layout + full Unicode (Hindi/CJK/emoji).
+        // Ask for the filename first so Chrome's dialog opens pre-filled.
+        setPdfNameOpen(true);
+        return;
+      }
+      if (fmt === "docx") exportChatToDocx(video?.title, messages);
+      else exportChatToTxt(video?.title, messages);
+      notify.success(`Exported ${fmt.toUpperCase()}`);
+    },
+    [messages, video?.title, notify]
+  );
+
+  /* ---- Deep links: ?insight=... and ?export=... ---- */
+  useEffect(() => {
+    if (loadingPage) return;
+
+    const insightParam = searchParams.get("insight");
+    const exportParam = searchParams.get("export");
+    if (!insightParam && !exportParam) return;
+
+    if (insightParam === "summary" || insightParam === "keypoints") {
+      setInsight(insightParam);
+    }
+    if (exportParam && !exportHandled.current) {
+      exportHandled.current = true;
+      handleExport(exportParam);
+    }
+
+    const next = new URLSearchParams(searchParams);
+    next.delete("insight");
+    next.delete("export");
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadingPage, searchParams]);
 
   const sendQuestion = async (question) => {
     const text = (question ?? input).trim();
@@ -110,43 +195,35 @@ const Chat = () => {
 
     try {
       const res = await chatApi.ask(videoId, text, language);
-      setMessages((m) => [
-        ...m,
-        { role: "ai", content: res.data.answer },
-      ]);
+      setMessages((m) => [...m, { role: "ai", content: res.data.answer, question: text }]);
+      refresh({ silent: true });
     } catch (err) {
       const msg = getErrorMessage(err);
-      setMessages((m) => [
-        ...m,
-        { role: "ai", content: `⚠️ ${msg}` },
-      ]);
-      toast.error(msg);
+      setMessages((m) => [...m, { role: "ai", content: `⚠️ ${msg}`, question: text }]);
+      notify.error(msg);
     } finally {
       setSending(false);
       inputRef.current?.focus();
     }
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
+  const handleSubmit = (event) => {
+    event.preventDefault();
     sendQuestion();
   };
 
-  const handleExport = (fmt) => {
-    setExportOpen(false);
-    if (messages.length === 0) {
-      toast.error("No conversation to export yet");
-      return;
+  const onKeyDown = (event) => {
+    if (event.key !== "Enter") return;
+    const wantsSend = preferences.sendOnEnter
+      ? !event.shiftKey
+      : event.ctrlKey || event.metaKey;
+    if (wantsSend) {
+      event.preventDefault();
+      sendQuestion();
     }
-    if (fmt === "pdf") {
-      // Browser "Save as PDF": premium layout + full Unicode (Hindi/CJK/emoji).
-      startPrint();
-      return;
-    }
-    if (fmt === "docx") exportChatToDocx(video?.title, messages);
-    else exportChatToTxt(video?.title, messages);
-    toast.success(`Exported ${fmt.toUpperCase()}`);
   };
+
+  const bookmarked = isVideoBookmarked(videoId);
 
   if (loadingPage) {
     return (
@@ -160,149 +237,222 @@ const Chat = () => {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="mx-auto flex h-[calc(100vh-5.5rem)] max-w-5xl flex-col px-4 py-4"
+      transition={{ duration: 0.25 }}
+      className="mx-auto flex h-[calc(100vh-4rem)] w-full max-w-5xl flex-col px-4 py-4 sm:px-6"
     >
       {/* ---- Video header ---- */}
-      <div className="glass mb-4 flex items-center gap-3 rounded-2xl p-3">
+      <div className="card-flush mb-3 flex items-center gap-3 p-2.5">
         <button
           onClick={() => navigate("/dashboard")}
-          className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-          title="Back to dashboard"
+          aria-label="Back to dashboard"
+          className="rounded-lg p-2 text-muted transition-colors hover:bg-card2 hover:text-ink"
         >
           <ArrowLeft size={18} />
         </button>
+
         <img
           src={video?.thumbnail}
-          alt={video?.title}
-          className="h-12 w-20 rounded-lg object-cover"
+          alt=""
+          className="hidden h-11 w-[76px] shrink-0 rounded-lg object-cover sm:block"
         />
+
         <div className="min-w-0 flex-1">
-          <h1 className="line-clamp-1 font-semibold">{video?.title}</h1>
+          <h1 className="line-clamp-1 text-sm font-semibold text-ink">{video?.title}</h1>
           <a
             href={video?.url}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-brand-600 dark:text-slate-400"
+            className="inline-flex items-center gap-1 text-[11px] text-muted transition-colors hover:text-accent"
           >
-            Open on YouTube <ExternalLink size={11} />
+            {video?.author ? `${video.author} · ` : ""}Watch on YouTube
+            <ExternalLink size={10} />
           </a>
         </div>
 
-        {/* Language toggle */}
-        <div className="hidden items-center rounded-xl border border-slate-300 p-1 dark:border-slate-700 sm:inline-flex">
-          {[
-            { code: "en", label: "EN" },
-            { code: "hi", label: "हि" },
-          ].map((l) => (
-            <button
-              key={l.code}
-              onClick={() => setLanguage(l.code)}
-              className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
-                language === l.code
-                  ? "bg-brand-600 text-white"
-                  : "text-slate-600 dark:text-slate-300"
-              }`}
-            >
-              {l.label}
-            </button>
-          ))}
+        <div className="hidden sm:block">
+          <SegmentedControl
+            size="sm"
+            value={language}
+            onChange={setLanguage}
+            options={[
+              { id: "en", label: "EN", title: "Answer in English" },
+              { id: "hi", label: "हिं", title: "Answer in Hindi" },
+            ]}
+          />
         </div>
+
+        <button
+          onClick={() => {
+            const added = toggleVideoBookmark({ ...video, video_id: videoId });
+            notify.success(added ? "Bookmarked" : "Bookmark removed");
+          }}
+          aria-label={bookmarked ? "Remove bookmark" : "Bookmark this video"}
+          title={bookmarked ? "Remove bookmark" : "Bookmark this video"}
+          className={`rounded-lg p-2 transition-colors hover:bg-card2 ${
+            bookmarked ? "text-gold" : "text-muted hover:text-ink"
+          }`}
+        >
+          {bookmarked ? <BookmarkCheck size={18} /> : <Bookmark size={18} />}
+        </button>
+
+        <Menu
+          width="w-56"
+          trigger={
+            <button
+              aria-label="Conversation actions"
+              className="rounded-lg p-2 text-muted transition-colors hover:bg-card2 hover:text-ink"
+            >
+              <MoreVertical size={18} />
+            </button>
+          }
+        >
+          <MenuLabel>AI insights</MenuLabel>
+          <MenuItem icon={FileText} onClick={() => setInsight("summary")}>
+            Summary
+          </MenuItem>
+          <MenuItem icon={ListChecks} onClick={() => setInsight("keypoints")}>
+            Key points
+          </MenuItem>
+          <MenuItem icon={GraduationCap} onClick={() => setQuizOpen(true)}>
+            Quiz me
+          </MenuItem>
+
+          <MenuDivider />
+          <MenuLabel>Export conversation</MenuLabel>
+          {["pdf", "docx", "txt"].map((format) => (
+            <MenuItem key={format} icon={Download} onClick={() => handleExport(format)}>
+              Download {format.toUpperCase()}
+            </MenuItem>
+          ))}
+
+          <MenuDivider />
+          <MenuLabel>Organise</MenuLabel>
+          {collections.slice(0, 4).map((collection) => (
+            <MenuItem
+              key={collection.id}
+              icon={collection.video_ids.includes(videoId) ? BookmarkCheck : FolderPlus}
+              onClick={() => {
+                const added = toggleVideoInCollection(collection.id, videoId);
+                notify.success(
+                  added ? `Added to ${collection.name}` : `Removed from ${collection.name}`
+                );
+              }}
+            >
+              {collection.name}
+            </MenuItem>
+          ))}
+          <MenuItem icon={FolderPlus} onClick={() => setCollectionOpen(true)}>
+            New collection…
+          </MenuItem>
+        </Menu>
       </div>
 
       {/* ---- Quick actions ---- */}
       <div className="mb-3 flex flex-wrap gap-2">
-        <button onClick={() => setInsight("summary")} className="btn-ghost px-3 py-1.5 text-xs">
+        <button onClick={() => setInsight("summary")} className="btn-ghost h-9 px-3 text-xs">
           <FileText size={14} /> Summary
         </button>
-        <button onClick={() => setInsight("keypoints")} className="btn-ghost px-3 py-1.5 text-xs">
-          <ListChecks size={14} /> Key Points
+        <button onClick={() => setInsight("keypoints")} className="btn-ghost h-9 px-3 text-xs">
+          <ListChecks size={14} /> Key points
         </button>
-        <button onClick={() => setQuizOpen(true)} className="btn-ghost px-3 py-1.5 text-xs">
+        <button onClick={() => setQuizOpen(true)} className="btn-ghost h-9 px-3 text-xs">
           <GraduationCap size={14} /> Quiz
         </button>
-
-        {/* Export dropdown (PDF / DOCX / TXT) */}
-        <div className="relative">
-          <button
-            onClick={() => setExportOpen((v) => !v)}
-            className="btn-ghost px-3 py-1.5 text-xs"
-          >
-            <Download size={14} /> Export <ChevronDown size={12} />
-          </button>
-          {exportOpen && (
-            <div className="glass absolute right-0 z-30 mt-1.5 w-32 rounded-xl p-1.5">
-              {["pdf", "docx", "txt"].map((f) => (
-                <button
-                  key={f}
-                  onClick={() => handleExport(f)}
-                  className="block w-full rounded-lg px-3 py-1.5 text-left text-xs font-medium hover:bg-slate-100/70 dark:hover:bg-slate-800/70"
-                >
-                  {f.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <button
+          onClick={() => handleExport(preferences.defaultExport)}
+          className="btn-ghost h-9 px-3 text-xs"
+        >
+          <Download size={14} /> Export {preferences.defaultExport.toUpperCase()}
+        </button>
       </div>
 
       {/* ---- Messages ---- */}
-      <div className="flex-1 space-y-5 overflow-y-auto rounded-2xl bg-slate-100/50 p-4 dark:bg-slate-900/40">
+      <div className="card-flush flex-1 space-y-5 overflow-y-auto p-4">
         {messages.length === 0 && !sending && (
-          <div className="flex h-full flex-col items-center justify-center text-center">
-            <h2 className="text-xl font-semibold">Ask anything about this video</h2>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              I've read the whole transcript — try one of these:
+          <div className="flex h-full flex-col items-center justify-center px-4 text-center">
+            <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10 text-accent">
+              <Sparkles size={22} />
+            </span>
+            <h2 className="text-lg font-semibold text-ink">
+              Ask anything about this video
+            </h2>
+            <p className="mt-1 max-w-sm text-sm text-muted">
+              The full transcript has been read and indexed — answers come back with
+              timestamps.
             </p>
-            <div className="mt-5 flex flex-wrap justify-center gap-2">
-              {SUGGESTIONS.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => sendQuestion(s)}
-                  className="rounded-full border border-slate-300 bg-white/70 px-4 py-2 text-sm text-slate-600 transition-colors hover:border-brand-400 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300"
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
+
+            {preferences.showSuggestions && (
+              <div className="mt-5 flex flex-wrap justify-center gap-2">
+                {SUGGESTIONS.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    onClick={() => sendQuestion(suggestion)}
+                    className="chip hover:border-accent/50 hover:text-accent"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
-        {messages.map((m, i) => (
-          <ChatBubble key={i} role={m.role} content={m.content} />
+        {messages.map((message, index) => (
+          <ChatBubble
+            key={index}
+            role={message.role}
+            content={message.content}
+            onBookmark={
+              message.role === "ai"
+                ? () => {
+                    addAnswerBookmark({
+                      videoId,
+                      videoTitle: video?.title,
+                      question:
+                        message.question || messages[index - 1]?.content || "",
+                      answer: message.content,
+                    });
+                    notify.success("Answer saved to bookmarks");
+                  }
+                : undefined
+            }
+          />
         ))}
 
         {sending && <TypingIndicator />}
         <div ref={bottomRef} />
       </div>
 
-      {/* ---- Input ---- */}
-      <form onSubmit={handleSubmit} className="mt-4 flex items-end gap-2">
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              sendQuestion();
-            }
-          }}
-          rows={1}
-          placeholder="Ask a question about the video..."
-          className="input-field max-h-32 flex-1 resize-none py-3"
-        />
-        <button
-          type="submit"
-          disabled={sending || !input.trim()}
-          className="btn-primary h-[50px] w-[50px] !px-0"
-          aria-label="Send"
-        >
-          <Send size={18} />
-        </button>
+      {/* ---- Composer ---- */}
+      <form onSubmit={handleSubmit} className="mt-3">
+        <div className="flex items-end gap-2 rounded-2xl border border-line bg-card p-2 transition-colors focus-within:border-accent/50">
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={onKeyDown}
+            rows={1}
+            placeholder="Ask a question about the video..."
+            aria-label="Your question"
+            className="max-h-32 flex-1 resize-none bg-transparent px-2.5 py-2 text-sm text-ink outline-none placeholder:text-faint"
+          />
+          <button
+            type="submit"
+            disabled={sending || !input.trim()}
+            className="btn-primary h-10 w-10 !px-0"
+            aria-label="Send question"
+          >
+            <Send size={17} />
+          </button>
+        </div>
+        <p className="mt-1.5 px-1 text-[11px] text-faint">
+          {preferences.sendOnEnter
+            ? "Enter to send · Shift + Enter for a new line"
+            : "Ctrl + Enter to send · Enter for a new line"}
+        </p>
       </form>
 
-      {/* ---- Insights modal ---- */}
+      {/* ---- Modals ---- */}
       {insight && (
         <InsightsModal
           type={insight}
@@ -313,7 +463,6 @@ const Chat = () => {
         />
       )}
 
-      {/* ---- Quiz modal ---- */}
       {quizOpen && (
         <QuizModal
           videoId={videoId}
@@ -323,6 +472,23 @@ const Chat = () => {
         />
       )}
 
+      <CollectionFormModal
+        open={collectionOpen}
+        onClose={() => setCollectionOpen(false)}
+        onSaved={(collectionId) => {
+          toggleVideoInCollection(collectionId, videoId);
+          notify.success("Added to your new collection");
+        }}
+      />
+
+      <PdfNameModal
+        open={pdfNameOpen}
+        onClose={() => setPdfNameOpen(false)}
+        defaultName={suggestPdfName(video?.title, "Conversation")}
+        onConfirm={startPrint}
+      />
+
+      {printing && <PdfExportOverlay />}
       {printing && <PrintDocument video={video} messages={messages} />}
     </motion.div>
   );

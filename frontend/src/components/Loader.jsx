@@ -1,22 +1,20 @@
 /**
  * components/Loader.jsx
  * ---------------------
- * Animated gradient spinner with an optional label, used for loading states.
+ * Spinner with an optional label, used for page and route loading states.
  */
 
 import { motion } from "framer-motion";
 
-const Loader = ({ label = "", size = 40 }) => (
+const Loader = ({ label = "", size = 34 }) => (
   <div className="flex flex-col items-center justify-center gap-3">
     <motion.span
-      className="inline-block rounded-full border-4 border-brand-500/30 border-t-brand-600"
+      className="inline-block rounded-full border-2 border-line2 border-t-accent"
       style={{ width: size, height: size }}
       animate={{ rotate: 360 }}
-      transition={{ repeat: Infinity, duration: 0.9, ease: "linear" }}
+      transition={{ repeat: Infinity, duration: 0.85, ease: "linear" }}
     />
-    {label && (
-      <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
-    )}
+    {label && <p className="text-sm text-muted">{label}</p>}
   </div>
 );
 

@@ -38,6 +38,10 @@ def init_db():
         # Indexes -------------------------------------------------------
         _db.users.create_index([("email", ASCENDING)], unique=True)
         _db.videos.create_index([("video_id", ASCENDING)], unique=True)
+        # OTPs: compound lookup, plus a TTL index so expired codes are
+        # reaped by MongoDB itself rather than lingering as stale secrets.
+        _db.otps.create_index([("email", ASCENDING), ("purpose", ASCENDING)])
+        _db.otps.create_index("purge_at", expireAfterSeconds=0)
         _db.chats.create_index([("user_id", ASCENDING)])
         _db.chats.create_index([("video_id", ASCENDING)])
         # Upgrade collections

@@ -41,6 +41,24 @@ def create_user(name: str, email: str, password: str) -> dict:
     return user
 
 
+def create_verified_user(name: str, email: str, password_hash: str) -> dict:
+    """
+    Insert a user whose password is ALREADY hashed and whose email has been
+    proven by an OTP. Used by the two-step signup, where the hash is produced at
+    /register time so the plaintext never reaches the otps collection.
+    """
+    user = {
+        "name": name.strip(),
+        "email": email.strip().lower(),
+        "password": password_hash,
+        "email_verified": True,
+        "created_at": datetime.utcnow(),
+    }
+    result = _users().insert_one(user)
+    user["_id"] = result.inserted_id
+    return user
+
+
 def find_by_email(email: str):
     return _users().find_one({"email": email.strip().lower()})
 

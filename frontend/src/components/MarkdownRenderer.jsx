@@ -45,7 +45,7 @@ const components = {
   pre: ({ children }) => <>{children}</>,
 
   table: ({ children }) => (
-    <div className="md-table-wrap my-4 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+    <div className="md-table-wrap my-4 overflow-x-auto rounded-xl border border-line">
       <table className="md-table w-full border-collapse text-left text-sm">
         {children}
       </table>
@@ -57,7 +57,7 @@ const components = {
       href={href}
       target="_blank"
       rel="noreferrer noopener"
-      className="font-medium text-brand-600 underline decoration-brand-300 underline-offset-2 hover:text-brand-700 dark:text-brand-300"
+      className="font-medium text-accent underline underline-offset-2 hover:opacity-80"
     >
       {children}
     </a>
@@ -69,10 +69,10 @@ const components = {
         src={src}
         alt={alt || ""}
         loading="lazy"
-        className="mx-auto max-h-[28rem] rounded-xl border border-slate-200 object-contain shadow-md dark:border-slate-700"
+        className="mx-auto max-h-[28rem] rounded-xl border border-line object-contain shadow-soft"
       />
       {alt ? (
-        <figcaption className="mt-2 text-center text-xs text-slate-500 dark:text-slate-400">
+        <figcaption className="mt-2 text-center text-xs text-muted">
           {alt}
         </figcaption>
       ) : null}
@@ -83,7 +83,7 @@ const components = {
 };
 
 const MarkdownRenderer = ({ children, className = "" }) => (
-  <div className={`md-body prose prose-slate max-w-none dark:prose-invert ${className}`}>
+  <div className={`md-body max-w-none ${className}`}>
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath, remarkAdmonitions]}
       rehypePlugins={[rehypeKatex]}

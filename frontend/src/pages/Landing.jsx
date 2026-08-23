@@ -27,7 +27,6 @@ import {
   BrainCircuit,
 } from "lucide-react";
 
-import Footer from "../components/Footer";
 import { useAuth } from "../context/AuthContext";
 
 /* ---------- content ---------- */
@@ -125,12 +124,12 @@ const item = {
 
 const SectionHeading = ({ eyebrow, title, sub }) => (
   <div className="mb-12 text-center">
-    <p className="text-sm font-semibold uppercase tracking-widest text-brand-600 dark:text-brand-300">
+    <p className="text-xs font-bold uppercase tracking-[0.2em] text-accent">
       {eyebrow}
     </p>
-    <h2 className="mt-2 text-3xl font-bold sm:text-4xl">{title}</h2>
+    <h2 className="mt-2 text-3xl font-bold tracking-tight text-ink sm:text-4xl">{title}</h2>
     {sub && (
-      <p className="mx-auto mt-3 max-w-xl text-slate-600 dark:text-slate-300">
+      <p className="mx-auto mt-3 max-w-xl text-muted">
         {sub}
       </p>
     )}
@@ -150,11 +149,11 @@ const Landing = () => {
       exit={{ opacity: 0 }}
     >
       {/* ---------- Hero ---------- */}
-      <section className="mx-auto max-w-6xl px-4 pt-20 pb-16 text-center">
+      <section className="mx-auto max-w-6xl px-4 pb-16 pt-16 text-center sm:px-6">
         <motion.span
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-4 py-1.5 text-sm font-medium text-brand-700 dark:border-brand-500/20 dark:bg-brand-500/10 dark:text-brand-300"
+          className="inline-flex items-center gap-2 rounded-full border border-accent/25 bg-accent/10 px-4 py-1.5 text-xs font-semibold text-accent"
         >
           <Sparkles size={15} /> Powered by Retrieval-Augmented Generation
         </motion.span>
@@ -163,7 +162,7 @@ const Landing = () => {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="mx-auto mt-6 max-w-4xl text-4xl font-extrabold leading-tight tracking-tight sm:text-6xl"
+          className="mx-auto mt-6 max-w-4xl text-4xl font-extrabold leading-[1.1] tracking-tight text-ink sm:text-6xl"
         >
           Turn any <span className="gradient-text">YouTube video</span> into a
           conversation
@@ -173,7 +172,7 @@ const Landing = () => {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="mx-auto mt-6 max-w-2xl text-lg text-slate-600 dark:text-slate-300"
+          className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-muted"
         >
           Paste a link and ask questions in natural language. Get accurate,
           timestamp-cited answers, concise summaries, interactive quizzes and
@@ -186,10 +185,10 @@ const Landing = () => {
           transition={{ delay: 0.3 }}
           className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row"
         >
-          <Link to={ctaTarget} className="btn-primary px-7 py-3 text-base">
+          <Link to={ctaTarget} className="btn-primary h-12 px-7 text-[15px]">
             Get Started <ArrowRight size={18} />
           </Link>
-          <a href="#pipeline" className="btn-ghost px-7 py-3 text-base">
+          <a href="#pipeline" className="btn-ghost h-12 px-7 text-[15px]">
             How It Works <ArrowDown size={16} />
           </a>
         </motion.div>
@@ -202,25 +201,25 @@ const Landing = () => {
           className="relative mx-auto mt-16 max-w-3xl"
         >
           {/* soft glow behind the window */}
-          <div className="accent-grad absolute inset-x-10 -bottom-4 -z-10 h-28 rounded-full opacity-25 blur-3xl" />
+          <div className="accent-grad absolute inset-x-10 -bottom-4 -z-10 h-28 rounded-full opacity-20 blur-3xl" />
 
-          <div className="glass rounded-3xl p-6 text-left">
+          <div className="card-flush gradient-border rounded-2xl p-6 text-left shadow-lift">
             {/* window bar with a lecture title */}
-            <div className="flex items-center gap-2 border-b border-slate-200/60 pb-4 dark:border-white/10">
-              <span className="h-3 w-3 rounded-full bg-red-400" />
-              <span className="h-3 w-3 rounded-full bg-yellow-400" />
-              <span className="h-3 w-3 rounded-full bg-green-400" />
-              <span className="ml-3 truncate text-xs font-medium text-slate-500 dark:text-slate-400">
+            <div className="flex items-center gap-2 border-b border-line pb-4">
+              <span className="h-2.5 w-2.5 rounded-full bg-accent/70" />
+              <span className="h-2.5 w-2.5 rounded-full bg-gold/70" />
+              <span className="h-2.5 w-2.5 rounded-full bg-card3" />
+              <span className="ml-3 truncate text-xs font-medium text-muted">
                 Operating Systems — Lecture 12: Deadlocks (1:47:32)
               </span>
             </div>
 
             <div className="space-y-3 pt-4">
-              <div className="ml-auto w-fit max-w-[80%] rounded-2xl rounded-tr-sm bg-gradient-to-br from-brand-600 to-purple-600 px-4 py-2.5 text-sm text-white">
+              <div className="ml-auto w-fit max-w-[80%] rounded-2xl rounded-tr-sm border border-accent/25 bg-accent/12 px-4 py-2.5 text-sm text-ink">
                 What are the four conditions required for a deadlock?
               </div>
 
-              <div className="w-fit max-w-[85%] rounded-2xl rounded-tl-sm bg-white px-4 py-2.5 text-sm text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200">
+              <div className="w-fit max-w-[85%] rounded-2xl rounded-tl-sm border border-line bg-card2 px-4 py-2.5 text-sm leading-relaxed text-ink">
                 From the lecture: <b>mutual exclusion</b>,{" "}
                 <b>hold &amp; wait</b>, <b>no preemption</b> and{" "}
                 <b>circular wait</b>. All four conditions must hold
@@ -237,9 +236,9 @@ const Landing = () => {
                 ].map((chip) => (
                   <span
                     key={chip.label}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-300/70 bg-white/70 px-3 py-1 text-xs font-medium text-slate-600 dark:border-slate-600 dark:bg-slate-800/70 dark:text-slate-300"
+                    className="chip"
                   >
-                    <chip.icon size={13} className="text-brand-500" />
+                    <chip.icon size={12} className="text-accent" />
                     {chip.label}
                   </span>
                 ))}
@@ -273,18 +272,18 @@ const Landing = () => {
             <motion.div key={step.title} variants={item} className="relative">
               <div className="card h-full">
                 <div className="flex items-center justify-between">
-                  <span className="accent-grad inline-flex h-11 w-11 items-center justify-center rounded-xl text-white">
+                  <span className="icon-tile h-11 w-11">
                     <step.icon size={20} />
                   </span>
-                  <span className="text-4xl font-extrabold text-slate-200 dark:text-slate-700">
+                  <span className="text-4xl font-extrabold text-card3">
                     {i + 1}
                   </span>
                 </div>
-                <h3 className="mt-4 text-lg font-semibold">{step.title}</h3>
-                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                <h3 className="mt-4 text-lg font-semibold text-ink">{step.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-muted">
                   {step.desc}
                 </p>
-                <p className="mt-3 font-mono text-[11px] text-brand-600 dark:text-brand-300">
+                <p className="mt-3 font-mono text-[11px] text-accent">
                   {step.tag}
                 </p>
               </div>
@@ -293,7 +292,7 @@ const Landing = () => {
               {i < pipeline.length - 1 && (
                 <ArrowRight
                   size={18}
-                  className="absolute -right-[21px] top-1/2 hidden -translate-y-1/2 text-slate-400 dark:text-slate-500 lg:block"
+                  className="absolute -right-[21px] top-1/2 hidden -translate-y-1/2 text-faint lg:block"
                 />
               )}
             </motion.div>
@@ -322,12 +321,12 @@ const Landing = () => {
           className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3"
         >
           {features.map((f) => (
-            <motion.div key={f.title} variants={item} className="card group">
-              <span className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-brand-600 to-purple-600 text-white transition-transform group-hover:scale-110">
+            <motion.div key={f.title} variants={item} className="card card-interactive group">
+              <span className="icon-tile h-12 w-12 transition-transform group-hover:scale-105">
                 <f.icon size={22} />
               </span>
-              <h3 className="mt-4 text-lg font-semibold">{f.title}</h3>
-              <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+              <h3 className="mt-4 text-lg font-semibold text-ink">{f.title}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted">
                 {f.desc}
               </p>
             </motion.div>
@@ -353,16 +352,16 @@ const Landing = () => {
           {stack.map((s) => (
             <motion.div key={s.group} variants={item} className="card">
               <div className="flex items-center gap-3">
-                <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-brand-100 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+                <span className="icon-tile">
                   <s.icon size={20} />
                 </span>
-                <h3 className="font-semibold">{s.group}</h3>
+                <h3 className="font-semibold text-ink">{s.group}</h3>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
                 {s.items.map((t) => (
                   <span
                     key={t}
-                    className="rounded-full border border-slate-300/70 bg-white/70 px-3 py-1 text-xs font-medium text-slate-600 dark:border-slate-600 dark:bg-slate-800/70 dark:text-slate-300"
+                    className="chip"
                   >
                     {t}
                   </span>
@@ -373,7 +372,6 @@ const Landing = () => {
         </motion.div>
       </section>
 
-      <Footer />
     </motion.div>
   );
 };

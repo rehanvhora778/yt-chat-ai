@@ -46,11 +46,27 @@ export const AuthProvider = ({ children }) => {
     setUser(userObj);
   };
 
+  // The backend may answer an auth call with either a session or a demand for
+  // an emailed code, so every caller goes through this one shape.
+  const settle = (data) => {
+    if (data?.otp_required) {
+      return {
+        success: true,
+        otpRequired: true,
+        email: data.email,
+        purpose: data.purpose,
+        devEcho: !!data.dev_echo,
+        message: data.message,
+      };
+    }
+    persistSession(data.token, data.user);
+    return { success: true, otpRequired: false };
+  };
+
   const login = async (email, password) => {
     try {
       const res = await authApi.login({ email, password });
-      persistSession(res.data.token, res.data.user);
-      return { success: true };
+      return settle(res.data);
     } catch (error) {
       return { success: false, error: getErrorMessage(error) };
     }
@@ -59,8 +75,27 @@ export const AuthProvider = ({ children }) => {
   const register = async (name, email, password) => {
     try {
       const res = await authApi.register({ name, email, password });
-      persistSession(res.data.token, res.data.user);
-      return { success: true };
+      return settle(res.data);
+    } catch (error) {
+      return { success: false, error: getErrorMessage(error) };
+    }
+  };
+
+  /** Finish a pending signup/login by submitting the emailed code. */
+  const verifyOtp = async (email, code, purpose = "register") => {
+    try {
+      const res = await authApi.verifyOtp({ email, code, purpose });
+      return settle(res.data);
+    } catch (error) {
+      return { success: false, error: getErrorMessage(error) };
+    }
+  };
+
+  /** Ask for a fresh code for a pending signup/login. */
+  const resendOtp = async (email, purpose = "register") => {
+    try {
+      const res = await authApi.resendOtp({ email, purpose });
+      return { success: true, devEcho: !!res.data?.dev_echo, message: res.data?.message };
     } catch (error) {
       return { success: false, error: getErrorMessage(error) };
     }
@@ -74,7 +109,16 @@ export const AuthProvider = ({ children }) => {
 
   return (
     <AuthContext.Provider
-      value={{ user, loading, login, register, logout, isAuthenticated: !!user }}
+      value={{
+        user,
+        loading,
+        login,
+        register,
+        verifyOtp,
+        resendOtp,
+        logout,
+        isAuthenticated: !!user,
+      }}
     >
       {children}
     </AuthContext.Provider>

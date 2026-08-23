@@ -1,50 +1,77 @@
 /**
  * context/ThemeContext.jsx
  * ------------------------
- * Multi-theme support (FEATURE 4). Five themes share the same layout but swap
- * accent colors, background gradients and glow colors via CSS variables driven
- * by a `data-theme` attribute on <html>. The `dark` class is toggled too so
- * Tailwind's dark: variants keep working. The choice is persisted to
- * localStorage and transitions are smooth (see index.css).
+ * Appearance control for the YouTube-inspired palette. Three choices —
+ * Dark (default), Light and System — are written to `data-theme` on <html>,
+ * where the CSS variables in index.css pick them up. The `dark` class is kept
+ * in sync so Tailwind's dark: variants (and the PDF print flow) keep working.
  */
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 
-// id must match the [data-theme="..."] blocks in index.css
 export const THEMES = [
-  { id: "default", label: "Dark Purple", dark: true, swatch: ["#6366f1", "#a855f7"] },
-  { id: "cyber-purple", label: "Cyber Purple", dark: true, swatch: ["#d946ef", "#8b5cf6"] },
-  { id: "glass-dark", label: "Glass Dark", dark: true, swatch: ["#64748b", "#94a3b8"] },
-  { id: "neon-blue", label: "Neon Blue", dark: true, swatch: ["#38bdf8", "#2563eb"] },
-  { id: "light-ai", label: "Light AI", dark: false, swatch: ["#7c3aed", "#6366f1"] },
+  { id: "dark", label: "Dark", hint: "Charcoal + red, easiest on the eyes" },
+  { id: "light", label: "Light", hint: "Bright surfaces for daylight" },
+  { id: "system", label: "System", hint: "Follow your device setting" },
 ];
 
-const DEFAULT_THEME = "default";
+const DEFAULT_THEME = "dark";
+const STORAGE_KEY = "theme";
 const ThemeContext = createContext();
 
-const resolve = (id) => THEMES.find((t) => t.id === id) || THEMES[0];
+const isValid = (id) => THEMES.some((t) => t.id === id);
+
+const prefersDark = () =>
+  typeof window !== "undefined" &&
+  window.matchMedia &&
+  window.matchMedia("(prefers-color-scheme: dark)").matches;
 
 export const ThemeProvider = ({ children }) => {
   const [theme, setThemeState] = useState(() => {
-    const stored = localStorage.getItem("theme");
-    return resolve(stored).id;
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return isValid(stored) ? stored : DEFAULT_THEME;
   });
 
+  // "system" resolves to a concrete palette and follows OS changes live
+  const [systemDark, setSystemDark] = useState(prefersDark);
   useEffect(() => {
-    const t = resolve(theme);
+    if (!window.matchMedia) return undefined;
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (e) => setSystemDark(e.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+
+  const resolved = theme === "system" ? (systemDark ? "dark" : "light") : theme;
+
+  useEffect(() => {
     const root = document.documentElement;
-    root.setAttribute("data-theme", t.id);
-    root.classList.toggle("dark", t.dark);
-    localStorage.setItem("theme", t.id);
-  }, [theme]);
+    root.setAttribute("data-theme", resolved);
+    root.classList.toggle("dark", resolved === "dark");
+    localStorage.setItem(STORAGE_KEY, theme);
+  }, [theme, resolved]);
 
-  const setTheme = (id) => setThemeState(resolve(id).id);
+  const setTheme = useCallback((id) => {
+    setThemeState(isValid(id) ? id : DEFAULT_THEME);
+  }, []);
 
-  const current = resolve(theme);
+  const toggleTheme = useCallback(() => {
+    setThemeState((current) => {
+      const active = current === "system" ? (prefersDark() ? "dark" : "light") : current;
+      return active === "dark" ? "light" : "dark";
+    });
+  }, []);
 
   return (
     <ThemeContext.Provider
-      value={{ theme, setTheme, themes: THEMES, isDark: current.dark, current }}
+      value={{
+        theme,
+        resolved,
+        setTheme,
+        toggleTheme,
+        themes: THEMES,
+        isDark: resolved === "dark",
+      }}
     >
       {children}
     </ThemeContext.Provider>

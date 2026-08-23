@@ -10,9 +10,15 @@ import axios from "axios";
 
 const baseURL = import.meta.env.VITE_API_BASE_URL || "";
 
+// Generous enough for a slow LLM answer (model fallback + a rate-limit retry can
+// legitimately take ~a minute) but bounded, so a wedged backend or a stopped
+// MongoDB surfaces as an error instead of an indicator that spins forever.
+const REQUEST_TIMEOUT_MS = 120000;
+
 const api = axios.create({
   baseURL: `${baseURL}/api`,
   headers: { "Content-Type": "application/json" },
+  timeout: REQUEST_TIMEOUT_MS,
 });
 
 // Attach the bearer token to every request if present
@@ -44,15 +50,33 @@ api.interceptors.response.use(
 );
 
 /** Extract a human friendly message from an axios error. */
-export const getErrorMessage = (error) =>
-  error?.response?.data?.error ||
-  error?.message ||
-  "Something went wrong. Please try again.";
+export const getErrorMessage = (error) => {
+  // The server answered with its own message — always the most useful.
+  const serverMessage = error?.response?.data?.error;
+  if (serverMessage) {
+    // Backend surfaces raw pymongo text when MongoDB is down; translate it.
+    if (/27017|ServerSelectionTimeout|No connection could be made/i.test(serverMessage)) {
+      return "Can't reach the database. Make sure the MongoDB service is running, then try again.";
+    }
+    return serverMessage;
+  }
+  // No response at all: timed out, backend down, or network dropped.
+  if (error?.code === "ECONNABORTED" || /timeout/i.test(error?.message || "")) {
+    return "The server took too long to respond. It may be busy — please try again.";
+  }
+  if (error?.request && !error?.response) {
+    return "Can't reach the server. Check that the backend is running on port 5000.";
+  }
+  return error?.message || "Something went wrong. Please try again.";
+};
 
 // ---- Auth ----
 export const authApi = {
   register: (payload) => api.post("/auth/register", payload),
   login: (payload) => api.post("/auth/login", payload),
+  // Two-step signup: /register emails a code, these finish or re-send it.
+  verifyOtp: (payload) => api.post("/auth/verify-otp", payload),
+  resendOtp: (payload) => api.post("/auth/resend-otp", payload),
   me: () => api.get("/auth/me"),
 };
 

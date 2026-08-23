@@ -35,14 +35,18 @@ class Config:
     # text generation (chat/summary/key-points) uses Groq when GROQ_API_KEY
     # is present, and only falls back to Gemini otherwise.
     GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-    GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    # NOTE: Groq retires models regularly. llama-3.3-70b-versatile was
+    # decommissioned and now 404s ("model does not exist"), so the default is
+    # gpt-oss-120b (131k context, clean Markdown output, no <think> leakage).
+    # Check https://console.groq.com/docs/models before changing this.
+    GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     # Fallback Groq model, used automatically when GROQ_MODEL hits a free-tier
-    # limit (llama-3.3-70b is only ~100k tokens/DAY, which a few full-transcript
-    # notes/summaries exhaust). Must have a high enough per-MINUTE token limit to
-    # accept a full-transcript request: llama-3.1-8b-instant caps at 6k TPM (too
-    # small for ~6k-token notes), whereas openai/gpt-oss-120b handles it and has
-    # its own separate daily budget. Set equal to GROQ_MODEL/blank to disable.
-    GROQ_FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-120b")
+    # daily cap OR is unavailable/decommissioned. Must have a high enough
+    # per-MINUTE token limit to accept a full-transcript request and its own
+    # separate daily budget. gpt-oss-20b qualifies and, like 120b, returns
+    # clean prose (qwen3.6-27b leaks visible <think> blocks - do not use it).
+    # Set equal to GROQ_MODEL/blank to disable.
+    GROQ_FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-20b")
     # Cap on completion length (defensive — bounds tokens per call).
     GROQ_MAX_OUTPUT_TOKENS = int(os.getenv("GROQ_MAX_OUTPUT_TOKENS", 4096))
     # Groq Whisper used to transcribe videos without captions (free).
@@ -65,6 +69,36 @@ class Config:
     FAISS_STORE_PATH = os.path.abspath(
         os.getenv("FAISS_STORE_PATH", "faiss_store")
     )
+
+    # ---- Email / SMTP (used to deliver signup OTP codes) ----
+    # For Gmail use an APP PASSWORD (Google Account > Security > 2-Step
+    # Verification > App passwords) — a normal account password will not work
+    # and should never be put here.
+    SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+    SMTP_USER = os.getenv("SMTP_USER", "")
+    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+    SMTP_FROM = os.getenv("SMTP_FROM", "") or SMTP_USER
+    SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "YT Chat GenAI")
+    # STARTTLS on 587 (Gmail default); set false only for an SSL-on-connect host.
+    SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+
+    @classmethod
+    def smtp_configured(cls):
+        return bool(cls.SMTP_HOST and cls.SMTP_USER and cls.SMTP_PASSWORD)
+
+    # ---- One-time passwords (email verification at signup) ----
+    OTP_LENGTH = int(os.getenv("OTP_LENGTH", 6))
+    OTP_TTL_MINUTES = int(os.getenv("OTP_TTL_MINUTES", 10))
+    OTP_MAX_ATTEMPTS = int(os.getenv("OTP_MAX_ATTEMPTS", 5))
+    OTP_RESEND_COOLDOWN_SECONDS = int(os.getenv("OTP_RESEND_COOLDOWN_SECONDS", 60))
+    OTP_MAX_SENDS_PER_HOUR = int(os.getenv("OTP_MAX_SENDS_PER_HOUR", 5))
+    # Require an emailed code on login too. Off: signup-only verification.
+    OTP_ON_LOGIN = os.getenv("OTP_ON_LOGIN", "false").lower() == "true"
+    # DEV ONLY: when SMTP is not configured, print the code to the backend
+    # console so signup is testable. Never enable this in production — it is
+    # ignored unless FLASK_ENV is development.
+    OTP_DEV_ECHO = os.getenv("OTP_DEV_ECHO", "true").lower() == "true"
 
     # ---- CORS ----
     CORS_ORIGINS = [

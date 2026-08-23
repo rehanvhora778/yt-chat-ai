@@ -1,21 +1,28 @@
 /**
  * components/InsightsModal.jsx
  * ----------------------------
- * A slide-over modal that lazily fetches and displays one of two AI insights
- * for a video: a summary or key points (with timestamps). Re-fetches whenever
- * the selected type or language changes.
+ * Slide-over panel showing one of two AI insights for a video: a summary or
+ * key points with timestamps.
+ *
+ * Results are cached per video + type + language (LibraryContext) so reopening
+ * a summary is instant and doesn't spend another API call — "Regenerate"
+ * forces a fresh request.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import toast from "react-hot-toast";
-import { X, FileText, ListChecks, Download } from "lucide-react";
+import { Download, FileText, ListChecks, RefreshCw, X } from "lucide-react";
 
 import Loader from "./Loader";
 import MarkdownRenderer from "./MarkdownRenderer";
 import InsightsPrintDocument from "./InsightsPrintDocument";
 import { videoApi, getErrorMessage } from "../api/client";
-import { usePrintExport } from "../lib/printExport";
+import { summaryKey, useLibrary } from "../context/LibraryContext";
+import { usePrintExport, suggestPdfName } from "../lib/printExport";
+import PdfNameModal from "./PdfNameModal";
+import PdfExportOverlay from "./PdfExportOverlay";
+import { timeAgo } from "../lib/format";
+import { useNotify } from "../lib/notify";
 
 const TITLES = {
   summary: { label: "Summary", icon: FileText },
@@ -23,51 +30,91 @@ const TITLES = {
 };
 
 const InsightsModal = ({ type, videoId, videoTitle, language, onClose }) => {
+  const notify = useNotify();
+  const { summaries, saveSummary } = useLibrary();
+  const { printing, startPrint } = usePrintExport();
+  const [pdfNameOpen, setPdfNameOpen] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState("");
   const [keyPoints, setKeyPoints] = useState([]);
-  const { printing, startPrint } = usePrintExport();
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-
-    const fetcher =
-      type === "summary"
-        ? videoApi.summary(videoId, language)
-        : videoApi.keyPoints(videoId, language);
-
-    fetcher
-      .then((res) => {
-        if (cancelled) return;
-        if (type === "summary") setSummary(res.data.summary || "");
-        else setKeyPoints(res.data.key_points || []);
-      })
-      .catch((err) => !cancelled && toast.error(getErrorMessage(err)))
-      .finally(() => !cancelled && setLoading(false));
-
-    return () => {
-      cancelled = true;
-    };
-  }, [type, videoId, language]);
+  const [error, setError] = useState("");
+  const [cachedAt, setCachedAt] = useState(null);
 
   const meta = TITLES[type] || TITLES.summary;
   const Icon = meta.icon;
 
-  // Whether there is data ready to export for the current insight
+  const load = useCallback(
+    async ({ force = false } = {}) => {
+      setError("");
+      const key = summaryKey(videoId, type, language);
+      const cached = summaries.find((item) => item.key === key);
+
+      if (cached && !force) {
+        setSummary(cached.content || "");
+        setKeyPoints(cached.points || []);
+        setCachedAt(cached.created_at);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setCachedAt(null);
+      try {
+        const res =
+          type === "summary"
+            ? await videoApi.summary(videoId, language)
+            : await videoApi.keyPoints(videoId, language);
+
+        const content = type === "summary" ? res.data.summary || "" : "";
+        const points = type === "summary" ? [] : res.data.key_points || [];
+
+        setSummary(content);
+        setKeyPoints(points);
+        saveSummary({ videoId, videoTitle, type, language, content, points });
+      } catch (err) {
+        const message = getErrorMessage(err);
+        setError(message);
+        notify.error(message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    // `summaries` is intentionally read at call time only — including it here
+    // would re-run the effect the moment a result is cached.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [videoId, type, language, videoTitle]
+  );
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type, videoId, language]);
+
   const hasData = type === "summary" ? !!summary : keyPoints.length > 0;
 
   const handleDownload = () => {
     if (!hasData) {
-      toast.error("Nothing to download yet");
+      notify.error("Nothing to download yet");
       return;
     }
-    // Browser "Save as PDF": premium layout + full Unicode (Hindi/CJK/emoji).
-    startPrint();
+    // Ask for the filename first so Chrome's save dialog opens pre-filled.
+    setPdfNameOpen(true);
   };
 
   return (
     <>
+      <PdfNameModal
+        open={pdfNameOpen}
+        onClose={() => setPdfNameOpen(false)}
+        defaultName={suggestPdfName(
+          videoTitle,
+          type === "summary" ? "Summary" : "Key Points"
+        )}
+        onConfirm={startPrint}
+      />
+
+      {printing && <PdfExportOverlay />}
       {printing && (
         <InsightsPrintDocument
           kind={type}
@@ -77,82 +124,107 @@ const InsightsModal = ({ type, videoId, videoTitle, language, onClose }) => {
         />
       )}
 
-    <AnimatePresence>
-      {/* Backdrop */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        onClick={onClose}
-        className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
-      />
+      <AnimatePresence>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+          className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm"
+        />
 
-      {/* Panel */}
-      <motion.aside
-        initial={{ x: "100%" }}
-        animate={{ x: 0 }}
-        exit={{ x: "100%" }}
-        transition={{ type: "spring", damping: 28, stiffness: 260 }}
-        className="fixed right-0 top-0 z-50 flex h-full w-full max-w-lg flex-col bg-white shadow-2xl dark:bg-slate-900"
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-200 p-5 dark:border-slate-800">
-          <div className="flex items-center gap-2">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-brand-600 to-purple-600 text-white">
-              <Icon size={18} />
-            </span>
-            <h2 className="text-lg font-bold">{meta.label}</h2>
-          </div>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={handleDownload}
-              disabled={loading || !hasData}
-              title="Download as PDF"
-              className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm font-medium text-brand-600 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-brand-300 dark:hover:bg-brand-500/10"
-            >
-              <Download size={17} />
-              <span className="hidden sm:inline">PDF</span>
-            </button>
-            <button
-              onClick={onClose}
-              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-            >
-              <X size={20} />
-            </button>
-          </div>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto p-5">
-          {loading ? (
-            <div className="flex h-full items-center justify-center">
-              <Loader label={`Generating ${meta.label.toLowerCase()}...`} />
-            </div>
-          ) : type === "summary" ? (
-            <MarkdownRenderer>{summary || "No summary available."}</MarkdownRenderer>
-          ) : (
-            <ul className="space-y-3">
-              {keyPoints.length === 0 && (
-                <p className="text-sm text-slate-500">No key points found.</p>
-              )}
-              {keyPoints.map((kp, i) => (
-                <li
-                  key={i}
-                  className="flex gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800"
-                >
-                  <span className="h-fit shrink-0 rounded-md bg-brand-50 px-2 py-1 text-xs font-semibold text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">
-                    {kp.timestamp}
-                  </span>
-                  <p className="text-sm text-slate-700 dark:text-slate-200">
-                    {kp.point}
+        <motion.aside
+          initial={{ x: "100%" }}
+          animate={{ x: 0 }}
+          exit={{ x: "100%" }}
+          transition={{ type: "spring", damping: 28, stiffness: 280 }}
+          className="fixed right-0 top-0 z-[95] flex h-full w-full max-w-lg flex-col border-l border-line bg-card shadow-lift"
+        >
+          {/* Header */}
+          <div className="flex items-start justify-between gap-3 border-b border-line p-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="icon-tile">
+                <Icon size={18} />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold tracking-tight text-ink">
+                  {meta.label}
+                </h2>
+                <p className="truncate text-xs text-muted">{videoTitle}</p>
+                {cachedAt && (
+                  <p className="mt-0.5 text-[11px] text-faint">
+                    Saved {timeAgo(cachedAt)} · {(language || "en").toUpperCase()}
                   </p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </motion.aside>
-    </AnimatePresence>
+                )}
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                onClick={() => load({ force: true })}
+                disabled={loading}
+                title="Regenerate"
+                aria-label="Regenerate"
+                className="rounded-lg p-2 text-muted transition-colors hover:bg-card2 hover:text-ink disabled:opacity-40"
+              >
+                <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+              </button>
+              <button
+                onClick={handleDownload}
+                disabled={loading || !hasData}
+                title="Download as PDF"
+                aria-label="Download as PDF"
+                className="rounded-lg p-2 text-muted transition-colors hover:bg-card2 hover:text-ink disabled:opacity-40"
+              >
+                <Download size={16} />
+              </button>
+              <button
+                onClick={onClose}
+                aria-label="Close"
+                className="rounded-lg p-2 text-muted transition-colors hover:bg-card2 hover:text-ink"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+
+          {/* Body */}
+          <div className="flex-1 overflow-y-auto p-4">
+            {loading ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2">
+                <Loader label={`Generating ${meta.label.toLowerCase()}...`} />
+                <p className="text-xs text-faint">This usually takes a few seconds</p>
+              </div>
+            ) : error ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                <p className="text-sm text-muted">{error}</p>
+                <button onClick={() => load({ force: true })} className="btn-secondary h-9 text-xs">
+                  <RefreshCw size={14} /> Try again
+                </button>
+              </div>
+            ) : type === "summary" ? (
+              <MarkdownRenderer>{summary || "No summary available."}</MarkdownRenderer>
+            ) : (
+              <ul className="space-y-2.5">
+                {keyPoints.length === 0 && (
+                  <p className="text-sm text-muted">No key points found.</p>
+                )}
+                {keyPoints.map((point, index) => (
+                  <li
+                    key={index}
+                    className="flex gap-3 rounded-xl border border-line bg-card2/50 p-3"
+                  >
+                    <span className="badge badge-accent h-fit shrink-0">
+                      {point.timestamp}
+                    </span>
+                    <p className="text-sm leading-relaxed text-ink">{point.point}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </motion.aside>
+      </AnimatePresence>
     </>
   );
 };

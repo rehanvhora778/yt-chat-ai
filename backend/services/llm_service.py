@@ -26,12 +26,34 @@ _RATE_LIMIT_RETRIES = 1
 _MAX_RETRY_WAIT = 20  # seconds
 
 
-class _RateLimited(Exception):
-    """Internal: a model exhausted its rate/quota limit (so try the next model)."""
+class _SkipModel(Exception):
+    """Internal: this model can't serve the request — move on to the next one."""
 
     def __init__(self, original):
         super().__init__(str(original))
         self.original = original
+
+
+class _RateLimited(_SkipModel):
+    """Internal: a model exhausted its rate/quota limit (so try the next model)."""
+
+
+class _ModelUnavailable(_SkipModel):
+    """Internal: the model is gone/inaccessible (e.g. Groq 404 model_not_found)."""
+
+
+def _is_model_unavailable(exc) -> bool:
+    """
+    True when the model itself is missing or inaccessible — e.g. Groq's
+    404 "The model `X` does not exist or you do not have access to it".
+    Providers retire models regularly (llama-3.3-70b-versatile was decommissioned
+    this way), so this must fall through to the next candidate rather than
+    surfacing a raw 404 to the user.
+    """
+    s = str(exc).lower()
+    if any(k in s for k in ("model_not_found", "does not exist", "decommission")):
+        return True
+    return "404" in s and "model" in s
 
 
 def _is_rate_limit(exc) -> bool:
@@ -152,14 +174,19 @@ def _invoke_full(messages, temperature=0.3):
     primary model's small daily token budget is used up.
     """
     last_exc = None
+    all_unavailable = True
     for provider, name in _candidate_models():
         model = _make_model(provider, name, temperature)
         try:
             return _invoke_once(model, messages)
-        except _RateLimited as rl:
-            last_exc = rl.original
-            continue  # this model is rate/quota limited — try the next one
-    # Every candidate model was rate/quota limited.
+        except _SkipModel as skip:
+            last_exc = skip.original
+            if not isinstance(skip, _ModelUnavailable):
+                all_unavailable = False
+            continue  # quota-limited or retired — try the next model
+    # No candidate could serve the request.
+    if all_unavailable:
+        raise RuntimeError(_friendly_unavailable_message())
     raise RuntimeError(_friendly_rate_limit_message(last_exc))
 
 
@@ -171,6 +198,11 @@ def _invoke_once(model, messages):
             text = (response.content or "").strip()
             return text, _extract_usage(response, messages, text)
         except Exception as exc:
+            # A retired/inaccessible model is permanent for this call — skip it
+            # so the next candidate gets a chance (checked before rate limits
+            # because a 404 body can also contain limit-ish wording).
+            if _is_model_unavailable(exc):
+                raise _ModelUnavailable(exc)
             if not _is_rate_limit(exc):
                 raise
             # Hard limit (or last attempt): give up on THIS model so the caller
@@ -178,6 +210,15 @@ def _invoke_once(model, messages):
             if _is_hard_limit(exc) or attempt >= _RATE_LIMIT_RETRIES:
                 raise _RateLimited(exc)
             time.sleep(min(_retry_delay_seconds(exc), _MAX_RETRY_WAIT) + 1)
+
+
+def _friendly_unavailable_message() -> str:
+    return (
+        "The configured AI model is no longer available (the provider retired "
+        "it). Set GROQ_MODEL / GROQ_FALLBACK_MODEL in backend/.env to a current "
+        "model from https://console.groq.com/docs/models, then restart the "
+        "backend."
+    )
 
 
 def _friendly_rate_limit_message(exc) -> str:
@@ -235,9 +276,7 @@ def answer_question(question, context_chunks, history=None, language="en"):
     """
     lang = _language_name(language)
 
-    context = "\n\n".join(
-        c.get("text", "") for c in context_chunks
-    ) or "No transcript context was retrieved."
+    context = "\n\n".join(c.get("text", "") for c in context_chunks)
 
     history_text = ""
     if history:
@@ -246,12 +285,30 @@ def answer_question(question, context_chunks, history=None, language="en"):
         )
 
     system = (
-        f"You are YT Chat GenAI, a premium AI assistant answering questions "
-        f"about a YouTube video using ONLY the transcript context provided. "
-        f"Always answer in {lang}. If the answer is not in the context, say so "
-        f"honestly instead of inventing facts.\n\n"
-        f"FORMAT every answer as clean, beautiful GitHub-Flavored Markdown — "
-        f"never a plain wall of text. Adaptively pick the best structure:\n"
+        f"You are YT Chat GenAI, an assistant that answers questions about ONE "
+        f"specific YouTube video. Your ONLY source of knowledge is the video "
+        f"transcript excerpt inside the <transcript> tags of the user message.\n\n"
+        f"GROUNDING RULES — these override every other instruction:\n"
+        f"1. Every factual claim in your answer MUST come from the transcript "
+        f"excerpt. Do NOT use your own general knowledge, training data, or "
+        f"assumptions — even when you are sure of the real-world answer, and "
+        f"even when the transcript seems incomplete or wrong.\n"
+        f"2. If the transcript excerpt does not contain the information needed "
+        f"to answer, reply (in {lang}) with one short sentence such as "
+        f"\"Sorry, this isn't covered in the video.\" You may add one sentence "
+        f"noting related topics the video DOES mention. Never guess, never "
+        f"answer from outside knowledge, never pad the refusal with headings "
+        f"or callouts.\n"
+        f"3. If the question is unrelated to the video (general knowledge, "
+        f"other topics, coding help, etc.), politely say you can only answer "
+        f"questions about this video.\n"
+        f"4. Greetings or thanks may be answered conversationally, but still "
+        f"without any factual claims from outside the transcript.\n"
+        f"5. Refer to the source as \"the video\" (not \"the transcript\" or "
+        f"\"the context\").\n\n"
+        f"Always answer in {lang}.\n\n"
+        f"FORMAT grounded answers as clean GitHub-Flavored Markdown — never a "
+        f"plain wall of text. Adaptively pick the best structure:\n"
         f"- Open with a short '## ' heading when the answer has multiple parts.\n"
         f"- Bullet lists for features/points; numbered lists for steps/processes.\n"
         f"- A Markdown TABLE for comparisons or structured data.\n"
@@ -267,15 +324,21 @@ def answer_question(question, context_chunks, history=None, language="en"):
     )
 
     user = (
-        (f"Previous conversation:\n{history_text}\n\n" if history_text else "")
-        + f"Transcript context:\n{context}\n\n"
-        + f"Question: {question}\n\nAnswer in {lang}:"
+        (f"Previous conversation (for reference only — do NOT treat it as a "
+         f"source of facts):\n{history_text}\n\n" if history_text else "")
+        + "<transcript>\n"
+        + (context or "NO TRANSCRIPT CONTEXT WAS RETRIEVED. You must say the "
+                      "video does not cover this.")
+        + "\n</transcript>\n\n"
+        + f"Question: {question}\n\n"
+        + f"Answer in {lang}, using ONLY the transcript excerpt above. If it "
+        + f"does not contain the answer, say the video doesn't cover it:"
     )
 
     # Returns (answer_text, usage_dict)
     return _invoke_full(
         [SystemMessage(content=system), HumanMessage(content=user)],
-        temperature=0.3,
+        temperature=0.1,
     )
 
 

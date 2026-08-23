@@ -11,6 +11,7 @@ import toast from "react-hot-toast";
 import { User, Mail, Lock, Eye, EyeOff, UserPlus, AlertCircle } from "lucide-react";
 
 import { useAuth } from "../context/AuthContext";
+import OtpForm from "../components/OtpForm";
 
 const Register = () => {
   const { register } = useAuth();
@@ -27,6 +28,8 @@ const Register = () => {
   // Shown inline in the form so failures are always visible, even if the
   // toast layer misbehaves (e.g. stale HMR state in dev).
   const [formError, setFormError] = useState("");
+  // Set once /register has emailed a code; swaps the form for the OTP step.
+  const [otpStep, setOtpStep] = useState(null);
 
   const handleChange = (e) =>
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -58,6 +61,12 @@ const Register = () => {
     const result = await register(name, email, password);
     setLoading(false);
 
+    if (result.success && result.otpRequired) {
+      // Account is NOT created yet — it appears once the code is verified.
+      setOtpStep({ email: result.email, devEcho: result.devEcho });
+      toast.success(result.message || "We've emailed you a verification code.");
+      return;
+    }
     if (result.success) {
       toast.success("Account created successfully!");
       navigate("/dashboard", { replace: true });
@@ -68,26 +77,39 @@ const Register = () => {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0 }}
-      className="mx-auto flex min-h-[80vh] max-w-md items-center px-4"
+      transition={{ duration: 0.3 }}
+      className="mx-auto flex min-h-[calc(100vh-9rem)] w-full max-w-md items-center px-4 sm:px-6"
     >
-      <div className="glass w-full rounded-3xl p-8">
-        <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold">Create your account</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+      <div className="card-flush gradient-border w-full p-7">
+        {otpStep ? (
+          <OtpForm
+            email={otpStep.email}
+            purpose="register"
+            devEcho={otpStep.devEcho}
+            onVerified={() => {
+              toast.success("Account created successfully!");
+              navigate("/dashboard", { replace: true });
+            }}
+            onBack={() => setOtpStep(null)}
+          />
+        ) : (
+        <>
+        <div className="mb-7 text-center">
+          <h1 className="text-2xl font-bold tracking-tight text-ink">Create your account</h1>
+          <p className="mt-1.5 text-sm text-muted">
             Start chatting with your videos in seconds
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="mb-1.5 block text-sm font-medium">Full name</label>
+            <label className="mb-1.5 block text-xs font-semibold text-muted">Full name</label>
             <div className="relative">
               <User
-                size={18}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                size={16}
+                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint"
               />
               <input
                 type="text"
@@ -95,18 +117,18 @@ const Register = () => {
                 value={form.name}
                 onChange={handleChange}
                 placeholder="Jane Doe"
-                className="input-field pl-10"
+                className="input-field h-11 pl-10"
                 autoComplete="name"
               />
             </div>
           </div>
 
           <div>
-            <label className="mb-1.5 block text-sm font-medium">Email</label>
+            <label className="mb-1.5 block text-xs font-semibold text-muted">Email</label>
             <div className="relative">
               <Mail
-                size={18}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                size={16}
+                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint"
               />
               <input
                 type="email"
@@ -114,18 +136,18 @@ const Register = () => {
                 value={form.email}
                 onChange={handleChange}
                 placeholder="you@example.com"
-                className="input-field pl-10"
+                className="input-field h-11 pl-10"
                 autoComplete="email"
               />
             </div>
           </div>
 
           <div>
-            <label className="mb-1.5 block text-sm font-medium">Password</label>
+            <label className="mb-1.5 block text-xs font-semibold text-muted">Password</label>
             <div className="relative">
               <Lock
-                size={18}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                size={16}
+                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint"
               />
               <input
                 type={showPassword ? "text" : "password"}
@@ -133,27 +155,28 @@ const Register = () => {
                 value={form.password}
                 onChange={handleChange}
                 placeholder="At least 6 characters"
-                className="input-field px-10"
+                className="input-field h-11 px-10"
                 autoComplete="new-password"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword((v) => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-faint transition-colors hover:text-ink"
               >
-                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
           </div>
 
           <div>
-            <label className="mb-1.5 block text-sm font-medium">
+            <label className="mb-1.5 block text-xs font-semibold text-muted">
               Confirm password
             </label>
             <div className="relative">
               <Lock
-                size={18}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                size={16}
+                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint"
               />
               <input
                 type={showPassword ? "text" : "password"}
@@ -161,15 +184,18 @@ const Register = () => {
                 value={form.confirm}
                 onChange={handleChange}
                 placeholder="Re-enter your password"
-                className="input-field pl-10"
+                className="input-field h-11 pl-10"
                 autoComplete="new-password"
               />
             </div>
           </div>
 
           {formError && (
-            <div className="flex items-start gap-2 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400">
-              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-xl border border-accent/30 bg-accent/10 px-3.5 py-3 text-sm text-ink"
+            >
+              <AlertCircle size={15} className="mt-0.5 shrink-0 text-accent" />
               <span>{formError}</span>
             </div>
           )}
@@ -177,27 +203,29 @@ const Register = () => {
           <button
             type="submit"
             disabled={loading}
-            className="btn-primary w-full py-3"
+            className="btn-primary h-11 w-full"
           >
             {loading ? (
               "Creating account..."
             ) : (
               <>
-                <UserPlus size={18} /> Sign Up
+                <UserPlus size={16} /> Create account
               </>
             )}
           </button>
         </form>
 
-        <p className="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
+        <p className="mt-6 text-center text-sm text-muted">
           Already have an account?{" "}
           <Link
             to="/login"
-            className="font-semibold text-brand-600 hover:underline dark:text-brand-300"
+            className="font-semibold text-accent hover:underline"
           >
             Log in
           </Link>
         </p>
+        </>
+        )}
       </div>
     </motion.div>
   );

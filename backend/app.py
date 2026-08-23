@@ -49,11 +49,17 @@ def create_app() -> Flask:
     @app.route("/")
     @app.route("/api/health")
     def health():
+        # Report the model that actually serves generation: Groq is preferred
+        # whenever a key is set, so reporting GEMINI_MODEL unconditionally was
+        # misleading when diagnosing model errors.
+        groq = bool(Config.GROQ_API_KEY)
         return jsonify(
             {
                 "status": "ok",
                 "service": "YT Chat GenAI API",
-                "model": Config.GEMINI_MODEL,
+                "provider": "groq" if groq else "gemini",
+                "model": Config.GROQ_MODEL if groq else Config.GEMINI_MODEL,
+                "fallback_model": Config.GROQ_FALLBACK_MODEL if groq else None,
             }
         )
 

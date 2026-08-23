@@ -49,7 +49,7 @@ and MongoDB Atlas.
 | Frontend         | React (Vite), Tailwind CSS, Framer Motion, Axios      |
 | Backend          | Python, Flask, Flask-CORS                             |
 | AI Framework     | LangChain                                             |
-| LLM (text + audio) | Groq API (`llama-3.3-70b-versatile`, `whisper-large-v3`) — falls back to Gemini |
+| LLM (text + audio) | Groq API (`openai/gpt-oss-120b`, `whisper-large-v3`) — falls back to Gemini |
 | Embeddings       | Google Gemini (`gemini-embedding-001`), local `fastembed` fallback |
 | Vector Database  | FAISS (local, per-video index)                        |
 | Database         | MongoDB Atlas (`pymongo`)                             |
@@ -171,13 +171,36 @@ config is needed locally.
 | `MONGO_URI`        | MongoDB Atlas connection string                   |
 | `MONGO_DB_NAME`    | Database name (default `yt_chat_genai`)           |
 | `GROQ_API_KEY`     | **Groq API key (recommended)** — text gen + audio |
-| `GROQ_MODEL`       | Chat model (default `llama-3.3-70b-versatile`)    |
+| `GROQ_MODEL`       | Chat model (default `openai/gpt-oss-120b`)        |
 | `GROQ_WHISPER_MODEL` | Audio model (default `whisper-large-v3`)        |
 | `GOOGLE_API_KEY`   | Google Gemini key — optional; used for embeddings (and as LLM fallback) |
 | `GEMINI_MODEL`     | Gemini fallback chat model (default `gemini-2.5-flash-lite`) |
 | `EMBEDDING_MODEL`  | Embedding model (default `models/gemini-embedding-001`) |
 | `FAISS_STORE_PATH` | Folder for FAISS indexes (default `faiss_store`)  |
 | `CORS_ORIGINS`     | Comma-separated allowed frontend origins          |
+| `SMTP_HOST`        | Mail host for signup codes (default `smtp.gmail.com`) |
+| `SMTP_PORT`        | Mail port (default `587`, STARTTLS)               |
+| `SMTP_USER`        | Sending address, e.g. your Gmail address          |
+| `SMTP_PASSWORD`    | **Gmail App Password** (16 chars) — never your account password |
+| `SMTP_FROM`        | From address (defaults to `SMTP_USER`)            |
+| `OTP_TTL_MINUTES`  | How long a signup code stays valid (default 10)   |
+| `OTP_ON_LOGIN`     | `true` to also require an emailed code on login (default `false`) |
+
+#### Email verification (OTP) at signup
+
+`POST /api/auth/register` no longer creates an account. It validates the details,
+emails a 6-digit code and holds the signup; the account is created only when
+`POST /api/auth/verify-otp` receives the right code, so an abandoned signup
+leaves nothing behind. Codes are stored as an HMAC-SHA256 hash (never in
+plaintext), expire after `OTP_TTL_MINUTES`, allow 5 wrong guesses, and are
+throttled to one per 60s and 5 per hour per address.
+
+To send real email with Gmail: enable 2-Step Verification, create an App
+Password at <https://myaccount.google.com/apppasswords>, and put that
+16-character value in `SMTP_PASSWORD`. A normal Gmail password will be rejected.
+**If `SMTP_USER`/`SMTP_PASSWORD` are left blank, the code is printed to the
+backend console instead** so signup still works locally.
+
 
 ### Frontend (`frontend/.env`)
 
@@ -235,7 +258,7 @@ config is needed locally.
    model when no Gemini key/quota) and store them in a **FAISS** index saved to
    disk per video.
 5. **Retrieve** the top-k relevant chunks via semantic similarity search.
-6. **Generate** a grounded answer with **Groq** (`llama-3.3-70b-versatile`,
+6. **Generate** a grounded answer with **Groq** (`openai/gpt-oss-120b`,
    falling back to Gemini), including recent chat history for context.
 
 ---
