@@ -28,3 +28,6 @@ Thumbs.db
 
 # Claude Code local tooling
 .claude/
+
+# Generated env block for the Render dashboard - contains every secret
+render-env.txt
