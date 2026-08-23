@@ -5,12 +5,13 @@ Application factory and entry point for the YT Chat GenAI backend.
 
 Run locally:
     python app.py
-Run in production:
-    gunicorn "app:create_app()" -b 0.0.0.0:5000
+Run in production (Render uses exactly this — see gunicorn.conf.py):
+    gunicorn -c gunicorn.conf.py app:app
 """
 
 from flask import Flask, jsonify
 from flask_cors import CORS
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config import Config
 from extensions import init_db
@@ -26,14 +27,21 @@ def create_app() -> Flask:
     app = Flask(__name__)
     app.config.from_object(Config)
 
+    # Render terminates TLS at its edge and forwards over plain HTTP, so
+    # without this Flask sees every request as http:// and the client IP as
+    # the proxy's. One proxy hop is what Render puts in front of a service.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
     # Warn about missing secrets and connect to MongoDB up front
     Config.validate()
     init_db()
 
-    # Cross-Origin Resource Sharing for the React frontend
+    # Cross-Origin Resource Sharing for the React frontend. cors_origins()
+    # returns the exact allowed origins plus, if CORS_ORIGIN_REGEX is set, a
+    # compiled pattern that matches Vercel's per-deployment preview hostnames.
     CORS(
         app,
-        resources={r"/api/*": {"origins": Config.CORS_ORIGINS}},
+        resources={r"/api/*": {"origins": Config.cors_origins()}},
         supports_credentials=True,
     )
 
@@ -71,6 +79,10 @@ def create_app() -> Flask:
     @app.errorhandler(405)
     def method_not_allowed(_):
         return jsonify({"error": "Method not allowed"}), 405
+
+    @app.errorhandler(413)
+    def payload_too_large(_):
+        return jsonify({"error": "Request body is too large"}), 413
 
     @app.errorhandler(500)
     def server_error(_):

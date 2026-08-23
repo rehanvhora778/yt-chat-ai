@@ -265,22 +265,28 @@ backend console instead** so signup still works locally.
 
 ## ☁️ Deployment
 
-### Backend → Render / Railway
+The repo ships with everything both platforms need:
 
-1. Push the repo to GitHub.
-2. Create a new **Web Service** pointing at `backend/`.
-3. Build command: `pip install -r requirements.txt`
-4. Start command: `gunicorn "app:create_app()" -b 0.0.0.0:$PORT`
-5. Add all backend environment variables in the dashboard.
-6. Note: FAISS indexes are stored on local disk — use a persistent disk, or
-   re-process videos after a restart on ephemeral hosts.
+| File | Purpose |
+| --- | --- |
+| `render.yaml` | Render Blueprint — creates the API service and prompts for each secret |
+| `backend/gunicorn.conf.py` | Production WSGI settings (single worker + threads, long timeout) |
+| `backend/.python-version` | Pins Python 3.11.9 (`faiss-cpu` has no 3.13 wheels) |
+| `frontend/vercel.json` | SPA rewrites plus cache and security headers |
 
-### Frontend → Vercel / Netlify
+**→ Follow [DEPLOYMENT.md](DEPLOYMENT.md)** for the step-by-step walkthrough:
+the accounts to create, every environment variable to paste where, the
+free-tier limits that actually bite (sleeping instances, ephemeral FAISS
+indexes, YouTube blocking datacenter IPs) and a troubleshooting table.
 
-1. Set the project root to `frontend/`.
-2. Build command: `npm run build` — output directory: `dist`.
-3. Set `VITE_API_BASE_URL` to your deployed backend URL.
-4. Add the deployed frontend origin to the backend's `CORS_ORIGINS`.
+The short version:
+
+* **Backend → Render.** New › Blueprint › pick this repo; `render.yaml` does
+  the rest. Health check: `/api/health`.
+* **Frontend → Vercel.** Import the repo, set **Root Directory** to
+  `frontend`, and set `VITE_API_BASE_URL` to the Render URL.
+* **Then** set `CORS_ORIGINS` on Render to the Vercel URL, or the browser
+  blocks every request.
 
 ---
 

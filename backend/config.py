@@ -7,23 +7,44 @@ single source of truth for settings.
 """
 
 import os
+import re
+from urllib.parse import quote
+
 from dotenv import load_dotenv
 
 # Load variables from a local .env file (if present) into os.environ
 load_dotenv()
+
+# Absolute path of the backend folder, so paths below never depend on the
+# working directory the process happens to be started from.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Placeholder secrets: fine locally, must never reach production. validate()
+# refuses to boot a production process that is still using them.
+_DEV_SECRET_KEY = "dev-secret-key"
+_DEV_JWT_SECRET = "dev-jwt-secret"
+
+
+def _resolve(path: str) -> str:
+    """Absolute path, resolved against the backend folder when relative."""
+    return path if os.path.isabs(path) else os.path.join(BASE_DIR, path)
 
 
 class Config:
     """Application configuration pulled from environment variables."""
 
     # ---- Flask ----
-    SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
+    SECRET_KEY = os.getenv("SECRET_KEY", _DEV_SECRET_KEY)
     FLASK_ENV = os.getenv("FLASK_ENV", "development")
     PORT = int(os.getenv("PORT", 5000))
     DEBUG = FLASK_ENV == "development"
+    IS_PRODUCTION = FLASK_ENV == "production"
+    # Reject request bodies larger than this (a transcript question is tiny;
+    # anything huge is a mistake or an attack). 1 MB.
+    MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", 1024 * 1024))
 
     # ---- JWT ----
-    JWT_SECRET = os.getenv("JWT_SECRET", "dev-jwt-secret")
+    JWT_SECRET = os.getenv("JWT_SECRET", _DEV_JWT_SECRET)
     JWT_EXPIRY_HOURS = int(os.getenv("JWT_EXPIRY_HOURS", 24))
 
     # ---- MongoDB ----
@@ -65,10 +86,12 @@ class Config:
     )
 
     # ---- FAISS ----
-    # Absolute path to the folder that stores per-video FAISS indexes
-    FAISS_STORE_PATH = os.path.abspath(
-        os.getenv("FAISS_STORE_PATH", "faiss_store")
-    )
+    # Absolute path to the folder that stores per-video FAISS indexes.
+    # WARNING: on Render the filesystem is EPHEMERAL unless a persistent disk
+    # is mounted at this path — without one, every index is wiped on each
+    # redeploy/restart and those videos must be processed again. See
+    # DEPLOYMENT.md.
+    FAISS_STORE_PATH = _resolve(os.getenv("FAISS_STORE_PATH", "faiss_store"))
 
     # ---- Email / SMTP (used to deliver signup OTP codes) ----
     # For Gmail use an APP PASSWORD (Google Account > Security > 2-Step
@@ -100,24 +123,103 @@ class Config:
     # ignored unless FLASK_ENV is development.
     OTP_DEV_ECHO = os.getenv("OTP_DEV_ECHO", "true").lower() == "true"
 
+    # ---- Outbound proxy for YouTube requests ----
+    # YouTube blocks most datacenter IP ranges, so transcript and audio
+    # downloads that work from a laptop routinely fail on a cloud host like
+    # Render with "RequestBlocked" / "IpBlocked". Routing YouTube traffic
+    # through a residential proxy is the documented way around it.
+    #
+    # Both options are opt-in; blank means "connect directly", which is what
+    # you want locally.
+    #   * Webshare (recommended by youtube-transcript-api): paste the ROTATING
+    #     RESIDENTIAL proxy username/password from the Webshare dashboard.
+    #   * Any other provider: set YOUTUBE_PROXY_URL to a full proxy URL, e.g.
+    #     http://user:pass@host:port
+    WEBSHARE_PROXY_USERNAME = os.getenv("WEBSHARE_PROXY_USERNAME", "").strip()
+    WEBSHARE_PROXY_PASSWORD = os.getenv("WEBSHARE_PROXY_PASSWORD", "").strip()
+    YOUTUBE_PROXY_URL = os.getenv("YOUTUBE_PROXY_URL", "").strip()
+
+    @classmethod
+    def youtube_proxy_url(cls):
+        """
+        A single proxy URL for plain HTTP clients (yt-dlp), or "" to go direct.
+        The "-rotate" suffix is what tells Webshare to pick a fresh IP per
+        request, which is the point of using it here.
+        """
+        if cls.YOUTUBE_PROXY_URL:
+            return cls.YOUTUBE_PROXY_URL
+        if cls.WEBSHARE_PROXY_USERNAME and cls.WEBSHARE_PROXY_PASSWORD:
+            user = quote(cls.WEBSHARE_PROXY_USERNAME, safe="")
+            password = quote(cls.WEBSHARE_PROXY_PASSWORD, safe="")
+            return f"http://{user}-rotate:{password}@p.webshare.io:80"
+        return ""
+
     # ---- CORS ----
+    # Exact origins allowed to call the API, comma separated. In production
+    # this must contain the deployed frontend origin (e.g. the Vercel domain);
+    # a trailing slash is not part of an origin and is stripped.
     CORS_ORIGINS = [
-        origin.strip()
+        origin.strip().rstrip("/")
         for origin in os.getenv(
-            "CORS_ORIGINS", "http://localhost:5173"
+            "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
         ).split(",")
         if origin.strip()
     ]
+    # Optional regex for origins that cannot be listed one by one. Vercel gives
+    # every preview deployment its own hostname, so allowing them needs a
+    # pattern rather than a fixed list, e.g.
+    #   CORS_ORIGIN_REGEX=^https://yt-chat-ai-[a-z0-9-]+\.vercel\.app$
+    # Leave blank to allow only the exact origins above (production default).
+    CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", "").strip()
+
+    @classmethod
+    def cors_origins(cls):
+        """Origins to hand flask-cors: exact strings plus the optional regex."""
+        origins = list(cls.CORS_ORIGINS)
+        if cls.CORS_ORIGIN_REGEX:
+            origins.append(re.compile(cls.CORS_ORIGIN_REGEX))
+        return origins
 
     @classmethod
     def validate(cls):
-        """Warn (do not crash) if critical secrets are missing."""
+        """
+        Check the critical settings.
+
+        Locally this only warns, so the app still boots while you are filling
+        in your .env. In production a missing database, a missing LLM key or a
+        leftover dev secret means the deployment is broken or insecure, so the
+        process refuses to start instead of serving a half-working API — the
+        reason is then visible in the Render deploy logs.
+        """
         missing = []
         if not cls.MONGO_URI:
             missing.append("MONGO_URI")
         # An LLM key is required, but either provider is fine.
         if not cls.GROQ_API_KEY and not cls.GOOGLE_API_KEY:
             missing.append("GROQ_API_KEY or GOOGLE_API_KEY")
+
+        if cls.IS_PRODUCTION:
+            if cls.SECRET_KEY == _DEV_SECRET_KEY:
+                missing.append("SECRET_KEY (still the shared dev placeholder)")
+            if cls.JWT_SECRET == _DEV_JWT_SECRET:
+                missing.append("JWT_SECRET (still the shared dev placeholder)")
+            if missing:
+                raise RuntimeError(
+                    "Refusing to start in production without: "
+                    + ", ".join(missing)
+                    + ". Set them in the Render dashboard (Environment tab) "
+                    "and redeploy."
+                )
+            # Not fatal, but the frontend cannot call the API without it.
+            if not cls.CORS_ORIGIN_REGEX and all(
+                ("localhost" in o or "127.0.0.1" in o) for o in cls.CORS_ORIGINS
+            ):
+                print(
+                    "[config] WARNING: CORS_ORIGINS only contains localhost. "
+                    "The deployed frontend will be blocked by the browser — "
+                    "set CORS_ORIGINS to your Vercel URL."
+                )
+
         if missing:
             print(
                 "[config] WARNING: missing environment variables: "

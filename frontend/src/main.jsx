@@ -4,11 +4,15 @@ import { BrowserRouter } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 
 import App from "./App.jsx";
+import { warmUpBackend } from "./api/client.js";
 import { AuthProvider } from "./context/AuthContext.jsx";
 import { ThemeProvider } from "./context/ThemeContext.jsx";
 import { PreferencesProvider } from "./context/PreferencesContext.jsx";
 import { LibraryProvider } from "./context/LibraryContext.jsx";
 import "./index.css";
+
+// Start waking a sleeping backend before the user asks it for anything.
+warmUpBackend();
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

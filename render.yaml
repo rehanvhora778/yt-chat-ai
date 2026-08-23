@@ -1,0 +1,123 @@
+# ===========================================================================
+# Render Blueprint — backend API (the frontend is deployed separately on
+# Vercel; see frontend/vercel.json and DEPLOYMENT.md).
+#
+# To use it: Render Dashboard > New > Blueprint > pick this repo. Render reads
+# this file, creates the service, and prompts for every secret marked
+# `sync: false`. Values marked `generateValue: true` are created by Render and
+# never stored in git.
+# ===========================================================================
+
+services:
+  - type: web
+    name: yt-chat-genai-api
+    runtime: python
+    plan: free # free instances sleep after 15 min idle; first hit takes ~50s
+    region: oregon # keep the MongoDB Atlas cluster in the same region
+    rootDir: backend
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: gunicorn -c gunicorn.conf.py app:app
+    healthCheckPath: /api/health
+    autoDeploy: true
+
+    envVars:
+      # ---- Runtime ----
+      # faiss-cpu 1.8.0 and fastembed 0.3.6 have no wheels for Python 3.13,
+      # which is Render's current default — pip would try to build faiss from
+      # source and the deploy would fail. Keep this pinned (backend/
+      # .python-version holds the same value).
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: FLASK_ENV
+        value: production
+      # Rotating these logs everyone out; that is the intended behaviour.
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRY_HOURS
+        value: "24"
+
+      # ---- Database (paste the Atlas SRV string when prompted) ----
+      - key: MONGO_URI
+        sync: false
+      - key: MONGO_DB_NAME
+        value: yt_chat_genai
+
+      # ---- LLM: Groq is preferred, Gemini is the fallback ----
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      - key: GROQ_FALLBACK_MODEL
+        value: openai/gpt-oss-20b
+      - key: GROQ_WHISPER_MODEL
+        value: whisper-large-v3
+      # Optional. Used for embeddings; without it embeddings run locally on
+      # the instance (fastembed), which is slower and uses more memory.
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash-lite
+      - key: EMBEDDING_MODEL
+        value: models/gemini-embedding-001
+
+      # ---- YouTube proxy ----
+      # YouTube blocks datacenter IPs, so transcript fetches that work on your
+      # laptop can fail here with "YouTube is blocking requests coming from
+      # this server". Leave blank first and only fill these in if you hit it;
+      # a Webshare rotating-residential plan is the usual fix.
+      - key: WEBSHARE_PROXY_USERNAME
+        sync: false
+      - key: WEBSHARE_PROXY_PASSWORD
+        sync: false
+      # Any other provider: a full URL, http://user:pass@host:port
+      - key: YOUTUBE_PROXY_URL
+        sync: false
+
+      # ---- CORS: set to the Vercel production URL, no trailing slash ----
+      - key: CORS_ORIGINS
+        sync: false
+      # Optional regex for Vercel preview deployments, e.g.
+      #   ^https://yt-chat-ai-[a-z0-9-]+\.vercel\.app$
+      - key: CORS_ORIGIN_REGEX
+        sync: false
+
+      # ---- Email for signup OTP codes (Gmail App Password, not the
+      #      account password). Leave blank and no one can register. ----
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: SMTP_FROM_NAME
+        value: YT Chat GenAI
+      - key: SMTP_USE_TLS
+        value: "true"
+      # Never true in production — it would print login codes into the logs.
+      # (config.py also ignores it whenever FLASK_ENV is production.)
+      - key: OTP_DEV_ECHO
+        value: "false"
+      - key: OTP_ON_LOGIN
+        value: "false"
+
+    # ---- Persistent storage for the FAISS indexes (OPTIONAL, PAID) ----
+    # Render's free filesystem is ephemeral: every redeploy and every wake
+    # from sleep wipes backend/faiss_store, so previously processed videos
+    # must be processed again before they can be chatted with. Mongo keeps the
+    # metadata, only the vector index is lost.
+    #
+    # To fix it, move to a paid instance and uncomment the block below, then
+    # add an env var FAISS_STORE_PATH=/var/data/faiss_store. A disk also pins
+    # the service to a single instance — which this app needs anyway (see
+    # gunicorn.conf.py).
+    #
+    # disk:
+    #   name: faiss-store
+    #   mountPath: /var/data
+    #   sizeGB: 1

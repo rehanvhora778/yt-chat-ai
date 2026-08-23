@@ -75,10 +75,20 @@ def _download_and_compress(video_id: str, work_dir: str) -> str:
     url = f"https://www.youtube.com/watch?v={video_id}"
     raw_template = os.path.join(work_dir, "raw.%(ext)s")
 
+    # yt-dlp hits YouTube directly and gets blocked from cloud IPs for the
+    # same reason the transcript API does, so it uses the same proxy when one
+    # is configured. Empty string means "no proxy" to yt-dlp.
+    proxy = Config.youtube_proxy_url()
+
     # 1) Probe duration first (so we can reject very long videos early)
     try:
         with yt_dlp.YoutubeDL(
-            {"quiet": True, "no_warnings": True, "skip_download": True}
+            {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "proxy": proxy,
+            }
         ) as ydl:
             info = ydl.extract_info(url, download=False)
         duration = info.get("duration") or 0
@@ -101,6 +111,7 @@ def _download_and_compress(video_id: str, work_dir: str) -> str:
                 "quiet": True,
                 "no_warnings": True,
                 "noplaylist": True,
+                "proxy": proxy,
             }
         ) as ydl:
             ydl.download([url])

@@ -49,6 +49,19 @@ api.interceptors.response.use(
   }
 );
 
+/**
+ * Fire-and-forget ping that wakes a sleeping backend.
+ *
+ * Render's free instances shut down after ~15 minutes of inactivity and take
+ * roughly a minute to boot again, so the user's first real request (usually
+ * login) would just hang. Calling this when the app loads overlaps that cold
+ * start with the time it takes them to read the page and type. Errors are
+ * swallowed on purpose: this is a warm-up, never a gate on rendering.
+ */
+export const warmUpBackend = () => {
+  api.get("/health", { timeout: 90000 }).catch(() => {});
+};
+
 /** Extract a human friendly message from an axios error. */
 export const getErrorMessage = (error) => {
   // The server answered with its own message — always the most useful.

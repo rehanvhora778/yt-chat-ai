@@ -18,13 +18,38 @@ from youtube_transcript_api import (
     TranscriptsDisabled,
     NoTranscriptFound,
     VideoUnavailable,
+    RequestBlocked,
+    IpBlocked,
 )
+from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
 
+from config import Config
 from utils.helpers import format_timestamp
 
 
 class TranscriptError(Exception):
     """Raised when a transcript cannot be retrieved."""
+
+
+def _proxy_config():
+    """
+    Proxy to route YouTube requests through, or None to connect directly.
+
+    Configured through the environment (see Config) because it is only needed
+    when deployed: YouTube serves cloud provider IPs a block page, so the same
+    video that works locally can fail on Render.
+    """
+    if Config.YOUTUBE_PROXY_URL:
+        return GenericProxyConfig(
+            http_url=Config.YOUTUBE_PROXY_URL,
+            https_url=Config.YOUTUBE_PROXY_URL,
+        )
+    if Config.WEBSHARE_PROXY_USERNAME and Config.WEBSHARE_PROXY_PASSWORD:
+        return WebshareProxyConfig(
+            proxy_username=Config.WEBSHARE_PROXY_USERNAME,
+            proxy_password=Config.WEBSHARE_PROXY_PASSWORD,
+        )
+    return None
 
 
 def _priority_key(transcript, preferred, other):
@@ -83,7 +108,7 @@ def fetch_transcript(video_id: str, language: str = "en") -> dict:
     preferred = "hi" if language == "hi" else "en"
     other = "en" if preferred == "hi" else "hi"
 
-    api = YouTubeTranscriptApi()
+    api = YouTubeTranscriptApi(proxy_config=_proxy_config())
 
     # ---- List available transcripts ----
     try:
@@ -96,6 +121,15 @@ def fetch_transcript(video_id: str, language: str = "en") -> dict:
         )
     except VideoUnavailable:
         raise TranscriptError("This video is unavailable or private.")
+    except (RequestBlocked, IpBlocked):
+        # Almost always a deployment problem rather than a bad video: the
+        # host's IP is in a range YouTube refuses to serve.
+        raise TranscriptError(
+            "YouTube is blocking requests coming from this server. Cloud "
+            "hosting IPs are blocked routinely — set WEBSHARE_PROXY_USERNAME "
+            "and WEBSHARE_PROXY_PASSWORD (or YOUTUBE_PROXY_URL) to route "
+            "transcript requests through a residential proxy."
+        )
     except Exception as exc:
         raise TranscriptError(
             "Could not access this video's transcripts. It may be private, "
