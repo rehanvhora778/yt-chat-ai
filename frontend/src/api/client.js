@@ -8,7 +8,13 @@
 
 import axios from "axios";
 
-const baseURL = import.meta.env.VITE_API_BASE_URL || "";
+// Trailing slashes are stripped rather than trusted: pasting the URL straight
+// out of a browser address bar into a dashboard field brings one along, and
+// `${baseURL}/api` would then build "https://host//api/..." — a double slash
+// that routes to nothing and 404s every single call.
+const baseURL = (import.meta.env.VITE_API_BASE_URL || "")
+  .trim()
+  .replace(/\/+$/, "");
 
 // Generous enough for a slow LLM answer (model fallback + a rate-limit retry can
 // legitimately take ~a minute) but bounded, so a wedged backend or a stopped
