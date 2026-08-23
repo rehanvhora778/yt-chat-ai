@@ -374,26 +374,64 @@ def check_gemini():
 # 4. SMTP - log in only, never send
 # --------------------------------------------------------------------------
 def check_smtp():
-    if not Config.smtp_configured():
-        return report("SMTP", FAIL,
-                      "not configured - SMTP_USER and/or SMTP_PASSWORD are empty",
-                      "Signup emails a code and creates no account until it is verified, "
-                      "so nobody can register without this. Create a Gmail App Password "
-                      "at https://myaccount.google.com/apppasswords")
+    """Verify whichever email transport is configured — signup depends on it."""
+    import requests
 
+    provider = Config.mail_provider()
+
+    if provider == "none":
+        return report("Email", FAIL,
+                      "no email provider configured",
+                      "Signup emails a code and creates no account until it is "
+                      "verified, so nobody can register without this. Set "
+                      "BREVO_API_KEY + MAIL_FROM (works on free hosting), or "
+                      "SMTP_USER + SMTP_PASSWORD (local / paid hosting only).")
+
+    if provider == "brevo":
+        try:
+            r = requests.get("https://api.brevo.com/v3/account",
+                             headers={"api-key": Config.BREVO_API_KEY}, timeout=20)
+        except Exception as exc:  # noqa: BLE001
+            return report("Email", FAIL, f"could not reach Brevo - {exc}")
+        if r.status_code == 401:
+            return report("Email", FAIL, f"Brevo rejected the key ({mask(Config.BREVO_API_KEY)})",
+                          "Create a new one at https://app.brevo.com/settings/keys/api")
+        if r.status_code != 200:
+            return report("Email", FAIL, f"Brevo returned {r.status_code} - {r.text[:120]}")
+        plan = r.json().get("plan", [{}])
+        credits = plan[0].get("credits") if plan else "?"
+        report("Email", PASS,
+               f"Brevo key valid, sending as {Config.MAIL_FROM} "
+               f"(credits: {credits}) - HTTPS, so free-tier SMTP blocks do not apply")
+        report("  sender", SKIP,
+               f"{Config.MAIL_FROM} must be verified under Brevo > Senders & IPs, "
+               "or every send is refused")
+        return
+
+    if provider == "resend":
+        try:
+            r = requests.get("https://api.resend.com/domains",
+                             headers={"Authorization": f"Bearer {Config.RESEND_API_KEY}"},
+                             timeout=20)
+        except Exception as exc:  # noqa: BLE001
+            return report("Email", FAIL, f"could not reach Resend - {exc}")
+        if r.status_code in (401, 403):
+            return report("Email", FAIL, "Resend rejected the key",
+                          "Create a new one at https://resend.com/api-keys")
+        report("Email", PASS, f"Resend key valid, sending as {Config.MAIL_FROM}")
+        report("  domain", SKIP,
+               "Resend's free tier only delivers to the account owner until you "
+               "verify a domain you control")
+        return
+
+    # ---- SMTP ----
     import smtplib
 
     password = Config.SMTP_PASSWORD
     if " " in password:
-        report("SMTP", FAIL, "SMTP_PASSWORD contains spaces",
-               "Google displays app passwords as 'abcd efgh ijkl mnop'. "
-               "Remove the spaces: 'abcdefghijklmnop'.")
-        return
-    if len(password) != 16:
-        report("  note", SKIP,
-               f"password is {len(password)} chars; Gmail app passwords are 16 "
-               "(fine if you are not on Gmail)")
-
+        return report("Email", FAIL, "SMTP_PASSWORD contains spaces",
+                      "Google shows app passwords as 'abcd efgh ijkl mnop'. "
+                      "Remove the spaces.")
     try:
         if Config.SMTP_USE_TLS:
             server = smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=20)
@@ -402,16 +440,18 @@ def check_smtp():
             server = smtplib.SMTP_SSL(Config.SMTP_HOST, Config.SMTP_PORT, timeout=20)
         server.login(Config.SMTP_USER, password)
         server.quit()
-        report("SMTP", PASS,
-               f"logged in as {Config.SMTP_USER} on {Config.SMTP_HOST}:{Config.SMTP_PORT} "
-               "(no mail sent)")
+        report("Email", PASS,
+               f"SMTP login OK as {Config.SMTP_USER} (no mail sent)")
+        report("  deployment", SKIP,
+               "SMTP works here, but Render's FREE plan blocks ports 25/465/587 - "
+               "set BREVO_API_KEY for the deployed service or signup will fail "
+               "there with 'Network is unreachable'")
     except smtplib.SMTPAuthenticationError:
-        report("SMTP", FAIL, "authentication rejected",
-               "This is almost always a normal account password rather than an App "
-               "Password. Google refuses account passwords for SMTP. Enable 2-Step "
-               "Verification, then create one at https://myaccount.google.com/apppasswords")
+        report("Email", FAIL, "SMTP authentication rejected",
+               "Almost always a normal account password instead of an App "
+               "Password. Create one at https://myaccount.google.com/apppasswords")
     except Exception as exc:  # noqa: BLE001
-        report("SMTP", FAIL, f"{type(exc).__name__}: {exc}")
+        report("Email", FAIL, f"{type(exc).__name__}: {exc}")
 
 
 # --------------------------------------------------------------------------

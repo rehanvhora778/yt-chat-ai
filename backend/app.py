@@ -81,6 +81,10 @@ def create_app() -> Flask:
                 # them by trying.
                 "cors_origins": Config.CORS_ORIGINS,
                 "cors_origin_regex": Config.CORS_ORIGIN_REGEX or None,
+                # "smtp" on a free host means signup email cannot work: those
+                # ports are blocked there. Surfaced so that is visible without
+                # having to fail a registration to find out.
+                "mail_provider": Config.mail_provider(),
             }
         )
 

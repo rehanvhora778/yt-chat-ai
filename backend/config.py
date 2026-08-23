@@ -151,6 +151,49 @@ class Config:
     def smtp_configured(cls):
         return bool(cls.SMTP_HOST and cls.SMTP_USER and cls.SMTP_PASSWORD)
 
+    # ---- HTTP email APIs ----
+    # Render's free plan blocks outbound SMTP (ports 25, 465, 587), so a Gmail
+    # App Password cannot deliver anything there — it fails with "Network is
+    # unreachable" however correct it is. These APIs go over 443 instead.
+    #
+    #   Brevo   - 300 emails/day free, and one verified sender address is
+    #             enough. No domain of your own needed, so this is the one that
+    #             works for a project mailing arbitrary Gmail addresses.
+    #   Resend  - more generous, but the free tier will only mail the account
+    #             owner until you verify a domain you control.
+    BREVO_API_KEY = os.getenv("BREVO_API_KEY", "").strip()
+    RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+
+    # Who the mail comes from, for every transport. Falls back to the SMTP
+    # settings so an existing configuration keeps working untouched.
+    MAIL_FROM = (
+        os.getenv("MAIL_FROM", "").strip()
+        or os.getenv("SMTP_FROM", "").strip()
+        or os.getenv("SMTP_USER", "").strip()
+    )
+    MAIL_FROM_NAME = (
+        os.getenv("MAIL_FROM_NAME", "").strip()
+        or os.getenv("SMTP_FROM_NAME", "").strip()
+        or "YT Chat GenAI"
+    )
+
+    @classmethod
+    def mail_provider(cls):
+        """
+        Which transport send_otp_email should use.
+
+        HTTP APIs win over SMTP because a deployment that has both configured
+        is almost certainly on a host that blocks SMTP — that being the reason
+        the API key was added at all.
+        """
+        if cls.BREVO_API_KEY and cls.MAIL_FROM:
+            return "brevo"
+        if cls.RESEND_API_KEY and cls.MAIL_FROM:
+            return "resend"
+        if cls.smtp_configured():
+            return "smtp"
+        return "none"
+
     # ---- One-time passwords (email verification at signup) ----
     OTP_LENGTH = int(os.getenv("OTP_LENGTH", 6))
     OTP_TTL_MINUTES = int(os.getenv("OTP_TTL_MINUTES", 10))
