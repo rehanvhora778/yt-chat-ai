@@ -32,7 +32,7 @@ Browser
 | --- | --- |
 | `render.yaml` | Render Blueprint — creates the web service and prompts for every secret |
 | `backend/gunicorn.conf.py` | Production WSGI settings (1 worker + 4 threads, 300s timeout) |
-| `backend/.python-version` | Pins Python 3.11.9 — 3.13 cannot install `faiss-cpu` |
+| `backend/.python-version` | Pins Python 3.11.9 — Render defaults to 3.14, which cannot install `faiss-cpu` |
 | `frontend/vercel.json` | SPA rewrites (deep links stop 404-ing), cache + security headers |
 | `backend/config.py` | Refuses to boot in production with a missing DB/LLM key or a placeholder secret |
 

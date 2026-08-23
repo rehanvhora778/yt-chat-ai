@@ -18,14 +18,15 @@ services:
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: gunicorn -c gunicorn.conf.py app:app
     healthCheckPath: /api/health
-    autoDeploy: true
+    autoDeployTrigger: commit # redeploy on every push to the default branch
 
     envVars:
       # ---- Runtime ----
-      # faiss-cpu 1.8.0 and fastembed 0.3.6 have no wheels for Python 3.13,
-      # which is Render's current default — pip would try to build faiss from
-      # source and the deploy would fail. Keep this pinned (backend/
-      # .python-version holds the same value).
+      # faiss-cpu 1.8.0 and fastembed 0.3.6 ship no wheels for Python 3.13+,
+      # and Render now defaults to 3.14 — pip would try to build faiss from
+      # source and the deploy would fail. This env var takes precedence over
+      # every other version source, so keep it pinned (backend/.python-version
+      # holds the same value for local pyenv users).
       - key: PYTHON_VERSION
         value: "3.11.9"
       - key: FLASK_ENV
