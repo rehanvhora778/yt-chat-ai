@@ -77,8 +77,23 @@ export const getErrorMessage = (error) => {
   if (error?.code === "ECONNABORTED" || /timeout/i.test(error?.message || "")) {
     return "The server took too long to respond. It may be busy — please try again.";
   }
+  // No response at all. The browser deliberately hides WHY — a CORS rejection,
+  // a dead host and a DNS failure are indistinguishable from here — so the
+  // message names the causes that actually apply to each environment instead
+  // of always blaming a local port that a deployed build never uses.
   if (error?.request && !error?.response) {
-    return "Can't reach the server. Check that the backend is running on port 5000.";
+    if (!baseURL) {
+      return (
+        "Can't reach the server. Start the backend in a second terminal: " +
+        "cd backend, then python app.py"
+      );
+    }
+    return (
+      `Can't reach the API at ${baseURL}. It may be waking up — free hosting ` +
+      "sleeps after 15 minutes idle and takes about a minute to start, so wait " +
+      "and try again. If it keeps failing, the API is up but rejecting this " +
+      "site: check CORS_ORIGINS on the server matches this exact address."
+    );
   }
   return error?.message || "Something went wrong. Please try again.";
 };
