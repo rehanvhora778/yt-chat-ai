@@ -30,7 +30,55 @@ import {
 import { useAuth } from "../context/AuthContext";
 
 const CODE_LENGTH = 6;
-const SUCCESS_HOLD_MS = 900; // long enough to read the tick, short enough not to wait
+// Long enough for the confetti to arc and the tick to register, short enough
+// that it never feels like being made to wait.
+const SUCCESS_HOLD_MS = 1500;
+
+/** A theme token as a canvas-ready colour. Tokens are stored as "R G B". */
+const tokenColor = (name, fallback) => {
+  try {
+    const value = getComputedStyle(document.documentElement)
+      .getPropertyValue(`--${name}`)
+      .trim();
+    return value ? `rgb(${value})` : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+/**
+ * Confetti burst for a verified code.
+ *
+ * canvas-confetti is imported only at this moment, so the ~7KB never reaches
+ * anyone who does not finish a signup — Login and Register are in the eager
+ * bundle, and this screen is the last thing most people see once.
+ *
+ * Three bursts rather than one: a centre pop plus two angled from the lower
+ * corners fills the card, where a single upward spray leaves the sides empty.
+ * Purely decorative, so any failure here is swallowed — nothing about it may
+ * delay or block the redirect that follows.
+ */
+const celebrate = async () => {
+  try {
+    const { default: confetti } = await import("canvas-confetti");
+    const colors = [
+      tokenColor("accent", "#dc1424"),
+      tokenColor("gold", "#ffb020"),
+      "#34d399",
+      "#ffffff",
+    ];
+    const base = { colors, disableForReducedMotion: true, scalar: 0.95 };
+
+    confetti({ ...base, particleCount: 60, spread: 72, startVelocity: 42,
+               origin: { x: 0.5, y: 0.58 } });
+    setTimeout(() => confetti({ ...base, particleCount: 34, spread: 100, angle: 60,
+                                startVelocity: 38, origin: { x: 0.15, y: 0.7 } }), 130);
+    setTimeout(() => confetti({ ...base, particleCount: 34, spread: 100, angle: 120,
+                                startVelocity: 38, origin: { x: 0.85, y: 0.7 } }), 230);
+  } catch {
+    // Decoration only — a failed chunk load must not break verification.
+  }
+};
 
 const OtpForm = ({
   email,
@@ -88,7 +136,8 @@ const OtpForm = ({
 
     if (result.success) {
       setStatus("success");
-      // Let the tick land before the page changes under them.
+      if (!reduce) celebrate();
+      // Let the tick and the confetti land before the page changes under them.
       setTimeout(() => onVerified?.(), reduce ? 0 : SUCCESS_HOLD_MS);
       return;
     }
