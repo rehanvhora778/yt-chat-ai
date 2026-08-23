@@ -13,7 +13,11 @@ services:
     name: yt-chat-genai-api
     runtime: python
     plan: free # free instances sleep after 15 min idle; first hit takes ~50s
-    region: oregon # keep the MongoDB Atlas cluster in the same region
+    # The Atlas cluster (backendb) is in Mumbai, and Singapore is Render's
+    # nearest region to it — Oregon would put ~250ms of round trip on every
+    # database call. A service's region is fixed at creation: changing this
+    # later means deleting the service and making a new one.
+    region: singapore
     rootDir: backend
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: gunicorn -c gunicorn.conf.py app:app

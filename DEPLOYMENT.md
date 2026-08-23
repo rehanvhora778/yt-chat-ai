@@ -43,8 +43,12 @@ Browser
 ## 1. MongoDB Atlas — the database
 
 1. Sign up at <https://www.mongodb.com/cloud/atlas/register>.
-2. **Create a free M0 cluster.** Pick a region close to Render's `oregon`
-   (e.g. `AWS / us-west-2`) — cross-region round trips make every page slower.
+2. **Create a free M0 cluster** — or reuse one you already have. Note which
+   region it is in: `render.yaml` must name Render's nearest region to it, or
+   every database call crosses an ocean. This repo is set to `singapore`
+   because the cluster it was configured against lives in Mumbai. Render
+   offers `oregon`, `ohio`, `virginia`, `frankfurt` and `singapore`, and a
+   service's region **cannot be changed after it is created**.
 3. **Database Access -> Add New Database User.** Username + password, role
    *Read and write to any database*. Save the password somewhere.
 4. **Network Access -> Add IP Address -> Allow access from anywhere
