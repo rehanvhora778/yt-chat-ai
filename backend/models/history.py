@@ -11,13 +11,11 @@ Schema:
 
 from datetime import datetime
 
-from extensions import get_db
+from extensions import require_db
 
 
 def _col():
-    db = get_db()
-    if db is None:
-        raise RuntimeError("Database is not available")
+    db = require_db()
     return db.history
 
 

@@ -256,7 +256,29 @@ environment variable in the Render dashboard also triggers a redeploy.
 | Requests go to `https://your-app.vercel.app/api/...` | `VITE_API_BASE_URL` was not set at build time, or was set after the build. Set it, then redeploy. |
 | Build fails on `faiss-cpu` / *Building wheel* | Python version is not pinned. Confirm `PYTHON_VERSION=3.11.9` in Render -> Environment. |
 | Login hangs about a minute, then works | Free instance cold start. Expected. |
-| *"Can't reach the database"* | Atlas Network Access is missing `0.0.0.0/0`, or the password in `MONGO_URI` is not percent-encoded. |
+| *"Can't reach the database"* / *"Database is not available"* | Open `https://<backend>/api/health` and read `database` and `database_error`. `ConfigurationError` = the Atlas cluster in `MONGO_URI` no longer exists or the host is mistyped (see below). `ServerSelectionTimeoutError` = Atlas Network Access is missing `0.0.0.0/0`, or the cluster is paused. `OperationFailure` = wrong username/password, or a password with special characters that is not percent-encoded. |
 | No signup email arrives | `SMTP_PASSWORD` is a normal Gmail password, not an App Password. Also check spam. |
 | *"YouTube is blocking requests coming from this server"* | Datacenter IP block — configure the proxy above. |
 | Chat says the video needs processing again | Instance restarted and the ephemeral FAISS index was lost. Re-process, or add a persistent disk. |
+
+### The Atlas cluster was deleted or paused
+
+If `/api/health` reports `"database": "unavailable"` with `ConfigurationError`,
+the hostname in `MONGO_URI` does not resolve any more: the cluster is gone.
+Nothing in Render can fix that, and restarting the service does not help.
+
+1. cloud.mongodb.com -> your project -> **Database**. If the cluster is listed
+   as *Paused*, click **Resume** and skip to step 5.
+2. Otherwise **Build a Database** -> **M0 (Free)** -> provider AWS, region
+   Mumbai (`ap-south-1`) to stay close to Render's Singapore region.
+3. **Database Access** -> add a user with a password of letters and digits
+   only (no percent-encoding needed).
+4. **Network Access** -> **Allow access from anywhere** (`0.0.0.0/0`).
+5. **Connect** -> **Drivers** -> copy the `mongodb+srv://...` string, put the
+   password in, and check it locally first:
+   `MONGO_URI="<string>" python scripts/check_env.py` from `backend/`.
+6. Render -> the service -> **Environment** -> replace `MONGO_URI` -> **Save,
+   rebuild and deploy**.
+7. `/api/health` should now show `"status": "ok"` and `"database": "connected"`.
+   Indexes are created automatically on startup; the new cluster starts empty,
+   so everyone signs up again (Google sign-in recreates accounts on first use).

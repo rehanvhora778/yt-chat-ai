@@ -25,13 +25,11 @@ from datetime import datetime
 from bson import ObjectId
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from extensions import get_db
+from extensions import require_db
 
 
 def _users():
-    db = get_db()
-    if db is None:
-        raise RuntimeError("Database is not available")
+    db = require_db()
     return db.users
 
 

@@ -14,7 +14,7 @@ from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config import Config
-from extensions import init_db
+from extensions import db_status, init_db
 from routes.auth_routes import auth_bp
 from routes.video_routes import video_bp
 from routes.chat_routes import chat_bp
@@ -61,9 +61,15 @@ def create_app() -> Flask:
         # whenever a key is set, so reporting GEMINI_MODEL unconditionally was
         # misleading when diagnosing model errors.
         groq = bool(Config.GROQ_API_KEY)
+        # Pinged live: a static "ok" while every sign-in failed with
+        # "Database is not available" is exactly what hid the last outage.
+        # Still HTTP 200 when degraded - Render restarts a service whose health
+        # check fails, and a restart cannot bring back an unreachable database.
+        db = db_status()
         return jsonify(
             {
-                "status": "ok",
+                "status": "ok" if db["database"] == "connected" else "degraded",
+                **db,
                 "service": "YT Chat GenAI API",
                 "provider": "groq" if groq else "gemini",
                 "model": Config.GROQ_MODEL if groq else Config.GEMINI_MODEL,

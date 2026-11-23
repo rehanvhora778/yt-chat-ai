@@ -23,10 +23,11 @@ never has to care which one was used.
 import re
 
 from flask import Blueprint, request, jsonify, g
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, PyMongoError
 from werkzeug.security import generate_password_hash
 
 from config import Config
+from extensions import DB_UNAVAILABLE_MESSAGE, DatabaseUnavailable
 from models import user as user_model
 from models import otp as otp_model
 from services.email_service import EmailError, send_otp_email
@@ -87,6 +88,19 @@ def _issue_code(email, purpose, payload=None):
     }
 
 
+
+def _service_unavailable(exc):
+    """503 for a backend fault the user can only wait out.
+
+    A database failure is logged in full and answered with a plain message: the
+    driver's own text names the cluster host and means nothing to a visitor.
+    Other RuntimeErrors are this module's own, already user-facing messages.
+    """
+    if isinstance(exc, (DatabaseUnavailable, PyMongoError)):
+        print(f"[auth] database error: {exc.__class__.__name__}: {exc}")
+        return jsonify({"error": DB_UNAVAILABLE_MESSAGE}), 503
+    return jsonify({"error": str(exc)}), 503
+
 @auth_bp.route("/register", methods=["POST"])
 def register():
     """Validate the signup, email a code, and hold the details until verified."""
@@ -129,8 +143,8 @@ def register():
         return jsonify({"error": exc.message}), exc.status
     except EmailError as exc:
         return jsonify({"error": exc.message}), 503
-    except RuntimeError as exc:
-        return jsonify({"error": str(exc)}), 503
+    except (RuntimeError, PyMongoError) as exc:
+        return _service_unavailable(exc)
     except Exception as exc:
         return jsonify({"error": f"Registration failed: {exc}"}), 500
 
@@ -174,8 +188,8 @@ def verify_otp():
         return jsonify({"error": exc.message}), exc.status
     except DuplicateKeyError:
         return jsonify({"error": "An account with this email already exists"}), 409
-    except RuntimeError as exc:
-        return jsonify({"error": str(exc)}), 503
+    except (RuntimeError, PyMongoError) as exc:
+        return _service_unavailable(exc)
     except Exception as exc:
         return jsonify({"error": f"Verification failed: {exc}"}), 500
 
@@ -207,8 +221,8 @@ def resend_otp():
         return jsonify({"error": exc.message}), exc.status
     except EmailError as exc:
         return jsonify({"error": exc.message}), 503
-    except RuntimeError as exc:
-        return jsonify({"error": str(exc)}), 503
+    except (RuntimeError, PyMongoError) as exc:
+        return _service_unavailable(exc)
     except Exception as exc:
         return jsonify({"error": f"Could not resend the code: {exc}"}), 500
 
@@ -252,8 +266,8 @@ def login():
         return jsonify({"error": exc.message}), exc.status
     except EmailError as exc:
         return jsonify({"error": exc.message}), 503
-    except RuntimeError as exc:
-        return jsonify({"error": str(exc)}), 503
+    except (RuntimeError, PyMongoError) as exc:
+        return _service_unavailable(exc)
     except Exception as exc:
         return jsonify({"error": f"Login failed: {exc}"}), 500
 
@@ -306,8 +320,8 @@ def google_sign_in():
         if user:
             return jsonify(_auth_payload(user, "Login successful"))
         return jsonify({"error": "An account with this email already exists"}), 409
-    except RuntimeError as exc:
-        return jsonify({"error": str(exc)}), 503
+    except (RuntimeError, PyMongoError) as exc:
+        return _service_unavailable(exc)
     except Exception as exc:
         return jsonify({"error": f"Google sign-in failed: {exc}"}), 500
 

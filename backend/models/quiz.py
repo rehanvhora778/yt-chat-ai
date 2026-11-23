@@ -26,13 +26,11 @@ from datetime import datetime
 
 from bson import ObjectId
 
-from extensions import get_db
+from extensions import require_db
 
 
 def _quizzes():
-    db = get_db()
-    if db is None:
-        raise RuntimeError("Database is not available")
+    db = require_db()
     return db.quizzes
 
 
