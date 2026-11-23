@@ -91,6 +91,11 @@ def create_app() -> Flask:
                 # ports are blocked there. Surfaced so that is visible without
                 # having to fail a registration to find out.
                 "mail_provider": Config.mail_provider(),
+                # Which routes around YouTube's block of cloud IPs are
+                # configured. Both false on a cloud host means only pasted
+                # transcripts will work.
+                "transcript_api": bool(Config.SUPADATA_API_KEY),
+                "youtube_proxy": Config.youtube_proxy_configured(),
             }
         )
 

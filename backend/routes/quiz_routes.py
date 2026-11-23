@@ -14,6 +14,7 @@ from models import quiz as quiz_model
 from models import video as video_model
 from models import analytics as analytics_model
 from services import llm_service
+from utils.helpers import error_response
 from utils.auth import token_required
 
 quiz_bp = Blueprint("quiz", __name__)
@@ -76,7 +77,7 @@ def generate_quiz():
 
         return jsonify({"quiz": quiz_model.serialize_quiz(quiz_doc)})
     except Exception as exc:
-        return jsonify({"error": f"Failed to generate quiz: {exc}"}), 500
+        return error_response("Failed to generate quiz", exc)
 
 
 @quiz_bp.route("/quiz/submit", methods=["POST"])
@@ -163,4 +164,4 @@ def quiz_attempts():
             }
         )
     except Exception as exc:
-        return jsonify({"error": f"Failed to load attempts: {exc}"}), 500
+        return error_response("Failed to load attempts", exc)

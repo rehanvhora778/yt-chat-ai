@@ -18,10 +18,10 @@ pymongo==4.8.0
 dnspython==2.6.1
 
 # Transcript extraction (v1.x — required; 0.6.x is broken against current YouTube)
-youtube-transcript-api==1.2.4
+youtube-transcript-api==1.2.5
 
 # Audio-transcription fallback (for videos without captions)
-yt-dlp==2026.6.9
+yt-dlp==2026.10.26
 imageio-ffmpeg==0.6.0    # bundles an ffmpeg binary if none is on PATH
 
 # AI / LangChain / Gemini

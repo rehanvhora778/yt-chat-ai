@@ -472,11 +472,32 @@ def check_deploy_settings():
         else:
             report("CORS", PASS, f"{origins}")
 
+    check_supadata()
+
     proxy = Config.youtube_proxy_url()
     report("YouTube proxy", SKIP,
            "configured" if proxy else
            "none - fine locally; only needed if the deployed app reports that "
            "YouTube is blocking the server's IP")
+
+
+def check_supadata():
+    """Fetch one short, well-known video's captions (spends 1 free credit)."""
+    if not Config.SUPADATA_API_KEY:
+        report("Transcript API", SKIP,
+               "SUPADATA_API_KEY not set - on Render, videos can then only be "
+               "processed from a pasted transcript (YouTube blocks cloud IPs)")
+        return
+    from services.transcript_service import TranscriptError, fetch_transcript_supadata
+    try:
+        result = fetch_transcript_supadata("jNQXAC9IVRw")  # "Me at the zoo", 19 s
+        report("Transcript API", PASS,
+               f"Supadata key works ({mask(Config.SUPADATA_API_KEY)}); "
+               f"{len(result['segments'])} caption lines fetched, 1 credit used")
+    except TranscriptError as exc:
+        report("Transcript API", FAIL, f"Supadata call failed: {exc}",
+               "Check the key at https://dash.supadata.ai and that the monthly "
+               "free credits are not used up. Details are in the log above.")
 
 
 def main():

@@ -13,8 +13,11 @@ Robustness notes:
     language — Gemini always answers in the requested language regardless.
 """
 
+import logging
 import re
+import time
 
+import requests
 from youtube_transcript_api import (
     YouTubeTranscriptApi,
     TranscriptsDisabled,
@@ -29,8 +32,26 @@ from config import Config
 from utils.helpers import format_timestamp
 
 
+logger = logging.getLogger("transcript_service")
+
+# Shown to users when YouTube refuses this server. Says what to do next, not
+# which environment variables an operator would set.
+BLOCKED_MESSAGE = (
+    "YouTube is blocking our server from reading this video right now. "
+    "You can paste the video's transcript below to continue."
+)
+
+
 class TranscriptError(Exception):
-    """Raised when a transcript cannot be retrieved."""
+    """Raised when a transcript cannot be retrieved.
+
+    `blocked` is True when YouTube refused this server (as opposed to the video
+    genuinely having no transcript), which is when another route is worth trying.
+    """
+
+    def __init__(self, message: str, blocked: bool = False):
+        super().__init__(message)
+        self.blocked = blocked
 
 
 def _proxy_config():
@@ -123,19 +144,21 @@ def fetch_transcript(video_id: str, language: str = "en") -> dict:
         )
     except VideoUnavailable:
         raise TranscriptError("This video is unavailable or private.")
-    except (RequestBlocked, IpBlocked):
+    except (RequestBlocked, IpBlocked) as exc:
         # Almost always a deployment problem rather than a bad video: the
-        # host's IP is in a range YouTube refuses to serve.
-        raise TranscriptError(
-            "YouTube is blocking requests coming from this server. Cloud "
-            "hosting IPs are blocked routinely — set WEBSHARE_PROXY_USERNAME "
-            "and WEBSHARE_PROXY_PASSWORD (or YOUTUBE_PROXY_URL) to route "
-            "transcript requests through a residential proxy."
-        )
+        # host's IP is in a range YouTube refuses to serve. Fix for operators:
+        # SUPADATA_API_KEY, or a residential proxy (WEBSHARE_PROXY_*).
+        logger.warning("YouTube blocked the caption request for %s: %s",
+                       video_id, exc.__class__.__name__)
+        raise TranscriptError(BLOCKED_MESSAGE, blocked=True)
     except Exception as exc:
+        logger.warning("Caption listing failed for %s: %s", video_id, exc)
         raise TranscriptError(
             "Could not access this video's transcripts. It may be private, "
-            f"age-restricted, or region-locked. ({exc})"
+            "age-restricted, or region-locked.",
+            # An unexpected failure from a cloud host is most often a block
+            # YouTube did not label as one.
+            blocked=True,
         )
 
     available = list(transcript_list)
@@ -182,12 +205,8 @@ def fetch_transcript(video_id: str, language: str = "en") -> dict:
                 continue
 
     if not raw:
-        detail = f" ({last_error})" if last_error else ""
-        raise TranscriptError(
-            "Could not download the transcript for this video. YouTube may be "
-            "temporarily blocking the request — please try again or use a "
-            f"different video.{detail}"
-        )
+        logger.warning("Caption download failed for %s: %s", video_id, last_error)
+        raise TranscriptError(BLOCKED_MESSAGE, blocked=True)
 
     segments = _raw_to_segments(raw)
     if not segments:
@@ -312,3 +331,96 @@ def parse_pasted_transcript(text: str, language: str = "en") -> dict:
             f"[{format_timestamp(s['start'])}] {s['text']}" for s in segments
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Supadata fallback
+# ---------------------------------------------------------------------------
+_SUPADATA_URL = "https://api.supadata.ai/v1/transcript"
+_SUPADATA_POLL_SECONDS = 90
+
+
+def supadata_configured() -> bool:
+    return bool(Config.SUPADATA_API_KEY)
+
+
+def fetch_transcript_supadata(video_id: str, language: str = "en") -> dict:
+    """
+    Fetch existing captions through Supadata, whose requests YouTube does not
+    block. `mode=native` only reads captions (1 credit); it never pays for AI
+    transcription. Long videos come back as a job id, polled until done.
+    Raises TranscriptError.
+    """
+    headers = {"x-api-key": Config.SUPADATA_API_KEY}
+    params = {
+        "url": f"https://www.youtube.com/watch?v={video_id}",
+        "lang": "hi" if language == "hi" else "en",
+        "mode": "native",
+        "text": "false",
+    }
+    try:
+        resp = requests.get(_SUPADATA_URL, headers=headers, params=params, timeout=60)
+        if resp.status_code == 202:
+            job_id = (resp.json() or {}).get("jobId")
+            resp = _poll_supadata_job(job_id, headers)
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning("Supadata request failed for %s: %s", video_id, exc)
+        raise TranscriptError(BLOCKED_MESSAGE, blocked=True)
+
+    if resp.status_code == 206:
+        raise TranscriptError("This video has no captions to read.")
+    if resp.status_code in (403, 404):
+        raise TranscriptError("This video is unavailable, private or restricted.")
+    if resp.status_code != 200:
+        # 401 = bad key, 429 = monthly quota or rate limit, 5xx = their outage.
+        # None of it is the user's to fix, so it reads as a block to them.
+        logger.warning("Supadata returned %s for %s: %s",
+                       resp.status_code, video_id, resp.text[:300])
+        raise TranscriptError(BLOCKED_MESSAGE, blocked=True)
+
+    try:
+        data = resp.json() or {}
+    except ValueError:
+        logger.warning("Supadata returned non-JSON for %s", video_id)
+        raise TranscriptError(BLOCKED_MESSAGE, blocked=True)
+    if data.get("status") == "failed":
+        logger.warning("Supadata job failed for %s: %s", video_id, data.get("error"))
+        raise TranscriptError(BLOCKED_MESSAGE, blocked=True)
+
+    content = data.get("content") or []
+    segments = _raw_to_segments(
+        {
+            "text": item.get("text", ""),
+            # Supadata reports milliseconds; the rest of the app uses seconds.
+            "start": (item.get("offset") or 0) / 1000.0,
+            "duration": (item.get("duration") or 0) / 1000.0,
+        }
+        for item in content
+        if isinstance(item, dict)
+    )
+    if not segments:
+        raise TranscriptError("This video has no captions to read.")
+
+    return {
+        "language": data.get("lang") or language,
+        "segments": segments,
+        "text": " ".join(s["text"] for s in segments),
+        "timestamped_text": "\n".join(
+            f"[{format_timestamp(s['start'])}] {s['text']}" for s in segments
+        ),
+    }
+
+
+def _poll_supadata_job(job_id, headers):
+    """Wait for an async Supadata job and return its final response."""
+    if not job_id:
+        raise requests.RequestException("Supadata returned 202 without a jobId")
+    deadline = time.monotonic() + _SUPADATA_POLL_SECONDS
+    while time.monotonic() < deadline:
+        time.sleep(1.5)
+        resp = requests.get(f"{_SUPADATA_URL}/{job_id}", headers=headers, timeout=30)
+        if resp.status_code != 200:
+            return resp
+        if (resp.json() or {}).get("status") in ("completed", "failed"):
+            return resp
+    raise requests.RequestException("Supadata job did not finish in time")

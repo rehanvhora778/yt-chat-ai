@@ -6,6 +6,7 @@ fetching public video metadata (title / thumbnail / author) via the oEmbed
 endpoint, and formatting seconds into a mm:ss timestamp.
 """
 
+import logging
 import re
 
 import requests
@@ -76,3 +77,26 @@ def format_timestamp(seconds: float) -> str:
     if hours:
         return f"{hours}:{minutes:02d}:{secs:02d}"
     return f"{minutes}:{secs:02d}"
+
+
+def error_response(action: str, exc: Exception, status: int = 500):
+    """
+    JSON error for a failed request, without leaking internals.
+
+    The full exception and traceback go to the log (call this inside the
+    `except` block). The client gets a plain message: our own RuntimeErrors
+    (rate limits, quota, configuration) are already written for users, a
+    database outage gets the standard 503 text, and anything else becomes
+    "<action>. Please try again." instead of a Python exception string.
+    """
+    from flask import jsonify
+    from pymongo.errors import PyMongoError
+
+    from extensions import DB_UNAVAILABLE_MESSAGE, DatabaseUnavailable
+
+    logging.getLogger("api").exception("%s", action)
+    if isinstance(exc, (DatabaseUnavailable, PyMongoError)):
+        return jsonify({"error": DB_UNAVAILABLE_MESSAGE}), 503
+    if isinstance(exc, RuntimeError):
+        return jsonify({"error": str(exc)}), 503
+    return jsonify({"error": f"{action}. Please try again."}), status

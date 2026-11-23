@@ -67,6 +67,13 @@ services:
       - key: EMBEDDING_MODEL
         value: models/gemini-embedding-001
 
+      # ---- Transcript API: what makes processing work on Render ----
+      # YouTube blocks Render's IPs. Supadata fetches the captions from its
+      # own network: free 100 videos/month at https://supadata.ai. Without a
+      # key, users can still paste a transcript by hand.
+      - key: SUPADATA_API_KEY
+        sync: false
+
       # ---- YouTube proxy ----
       # YouTube blocks datacenter IPs, so transcript fetches that work on your
       # laptop can fail here with "YouTube is blocking requests coming from

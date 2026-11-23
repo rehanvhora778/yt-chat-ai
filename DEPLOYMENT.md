@@ -218,7 +218,24 @@ Videos that process fine on your laptop can fail on Render with *"YouTube is
 blocking requests coming from this server"*. This is YouTube refusing
 datacenter IP ranges, not a bug in the app.
 
-**Built-in fallback (free):** when YouTube refuses the server, the processing
+**What the app does about it, in order:**
+
+1. Fetches the captions directly (works locally, usually blocked on Render).
+2. If blocked and `SUPADATA_API_KEY` is set, fetches the same captions through
+   [Supadata](https://supadata.ai), whose requests YouTube does not block.
+   **This is the setting that makes processing work on Render.** Free plan:
+   100 videos/month, no credit card. Sign up, copy the API key from the
+   dashboard, add it on Render -> Environment as `SUPADATA_API_KEY`, save.
+   `python scripts/check_env.py` verifies the key (spends one credit).
+3. Transcribes the audio — only for videos with no captions, and only when it
+   can work (locally, or with a proxy). On a blocked server it is skipped,
+   because the audio download is refused for the same reason.
+4. Otherwise the user is offered the paste box below.
+
+`/api/health` reports `transcript_api` and `youtube_proxy`, so you can see
+which of these are configured.
+
+**Built-in last resort (free):** when YouTube refuses the server, the processing
 page offers a *Paste the transcript instead* box. The user copies the text from
 YouTube's own *Show transcript* panel — their browser is not blocked — and the
 app parses it (timestamps kept, or estimated if absent) and continues as normal.
@@ -267,7 +284,7 @@ environment variable in the Render dashboard also triggers a redeploy.
 | Login hangs about a minute, then works | Free instance cold start. Expected. |
 | *"Can't reach the database"* / *"Database is not available"* | Open `https://<backend>/api/health` and read `database` and `database_error`. `ConfigurationError` = the Atlas cluster in `MONGO_URI` no longer exists or the host is mistyped (see below). `ServerSelectionTimeoutError` = Atlas Network Access is missing `0.0.0.0/0`, or the cluster is paused. `OperationFailure` = wrong username/password, or a password with special characters that is not percent-encoded. |
 | No signup email arrives | `SMTP_PASSWORD` is a normal Gmail password, not an App Password. Also check spam. |
-| *"YouTube is blocking requests coming from this server"* | Datacenter IP block — configure the proxy above. |
+| *"YouTube is blocking our server from reading this video"* | Datacenter IP block. Set `SUPADATA_API_KEY` on Render (free), or paste the transcript. |
 | First question after a restart is slow | The FAISS index is being restored from MongoDB (or rebuilt from the transcript). Expected once per video per restart. |
 
 ### The Atlas cluster was deleted or paused

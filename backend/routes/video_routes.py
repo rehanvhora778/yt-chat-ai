@@ -12,13 +12,14 @@ import uuid
 
 from flask import Blueprint, request, jsonify, g
 
+from config import Config
 from models import video as video_model
 from models import history as history_model
 from services import transcript_service, vector_service, llm_service, audio_service
 from services.transcript_service import TranscriptError
 from services.audio_service import AudioTranscriptionError
 from utils.auth import token_required
-from utils.helpers import extract_video_id, fetch_video_metadata
+from utils.helpers import error_response, extract_video_id, fetch_video_metadata
 
 video_bp = Blueprint("video", __name__)
 logger = logging.getLogger("video_routes")
@@ -50,6 +51,50 @@ def _prune_jobs():
             del _jobs[key]
 
 
+def _noop_report(step, message):
+    pass
+
+
+def _acquire_transcript(video_id, language, report=_noop_report):
+    """
+    Get a transcript by the first route that works. Returns (transcript, source).
+
+        1. YouTube captions, fetched directly.
+        2. The same captions through Supadata, if YouTube blocked us and a
+           SUPADATA_API_KEY is set. Supadata's requests are not blocked.
+        3. The audio, downloaded and transcribed - only when that can work.
+           The download goes to YouTube too, so if YouTube already refused this
+           server it would be refused again; without a proxy it is skipped
+           rather than costing the user another long wait for the same answer.
+
+    Raises TranscriptError carrying the most useful message of the attempts.
+    """
+    try:
+        return transcript_service.fetch_transcript(video_id, language), "captions"
+    except TranscriptError as err:
+        failure = err
+    blocked = failure.blocked
+
+    if blocked and transcript_service.supadata_configured():
+        report("captions", "Reading captions through the transcript service")
+        try:
+            return transcript_service.fetch_transcript_supadata(video_id, language), "captions"
+        except TranscriptError as err:
+            failure = err
+
+    if blocked and not Config.youtube_proxy_configured():
+        raise failure
+
+    report("audio", "No captions found — transcribing the audio")
+    try:
+        return audio_service.transcribe_audio(video_id, language), "audio"
+    except AudioTranscriptionError as audio_err:
+        raise TranscriptError(
+            f"{failure} The audio could not be transcribed either: {audio_err}",
+            blocked=blocked,
+        )
+
+
 def _run_processing_job(job_id, video_id, language, user_id, pasted=None):
     """Worker thread: same pipeline as /process-video, reporting each stage.
 
@@ -61,36 +106,15 @@ def _run_processing_job(job_id, video_id, language, user_id, pasted=None):
         meta = fetch_video_metadata(video_id)
 
         _job_update(job_id, step="captions", message="Extracting transcript")
-        source = "captions"
-        try:
-            if pasted:
-                source = "manual"
-                transcript = transcript_service.parse_pasted_transcript(pasted, language)
-            else:
-                transcript = transcript_service.fetch_transcript(video_id, language)
-        except TranscriptError as caption_err:
-            if pasted:
-                raise
-
-            _job_update(
-                job_id,
-                step="audio",
-                message="No captions found — transcribing the audio",
+        if pasted:
+            source = "manual"
+            transcript = transcript_service.parse_pasted_transcript(pasted, language)
+        else:
+            transcript, source = _acquire_transcript(
+                video_id,
+                language,
+                lambda step, message: _job_update(job_id, step=step, message=message),
             )
-            try:
-                transcript = audio_service.transcribe_audio(video_id, language)
-                source = "audio"
-            except AudioTranscriptionError as audio_err:
-                _job_update(
-                    job_id,
-                    done=True,
-                    error=f"{caption_err} Audio transcription also "
-                    f"failed: {audio_err}",
-                    # Both routes go through YouTube, so the one that cannot
-                    # be blocked is the user pasting the transcript in.
-                    can_paste_transcript=True,
-                )
-                return
 
         _job_update(job_id, step="index", message="Building vector database")
         chunk_count = vector_service.build_index(video_id, transcript["segments"])
@@ -123,10 +147,17 @@ def _run_processing_job(job_id, video_id, language, user_id, pasted=None):
             },
         )
     except TranscriptError as exc:
+        # Every transcript failure offers the paste box: the user's browser can
+        # always reach YouTube even when this server cannot.
         _job_update(job_id, done=True, error=str(exc), can_paste_transcript=True)
-    except Exception as exc:
+    except RuntimeError as exc:
+        # Our own messages (LLM / embedding quota and configuration problems).
         logger.exception("process-video job failed for %s", video_id)
-        _job_update(job_id, done=True, error=f"Failed to process video: {exc}")
+        _job_update(job_id, done=True, error=str(exc))
+    except Exception:
+        logger.exception("process-video job failed for %s", video_id)
+        _job_update(job_id, done=True,
+                    error="Something went wrong while processing this video. Please try again.")
 
 
 @video_bp.route("/process-video/start", methods=["POST"])
@@ -251,24 +282,7 @@ def process_video():
 
         # 2) Transcript — prefer the video's captions; if none exist, fall back
         #    to transcribing the audio with Groq Whisper (or Gemini if no Groq key).
-        source = "captions"
-        try:
-            transcript = transcript_service.fetch_transcript(video_id, language)
-        except TranscriptError as caption_err:
-            try:
-                transcript = audio_service.transcribe_audio(video_id, language)
-                source = "audio"
-            except AudioTranscriptionError as audio_err:
-                # Surface the most helpful message of the two
-                return (
-                    jsonify(
-                        {
-                            "error": f"{caption_err} Audio transcription also "
-                            f"failed: {audio_err}"
-                        }
-                    ),
-                    422,
-                )
+        transcript, source = _acquire_transcript(video_id, language)
 
         # 3) Build + persist FAISS index
         chunk_count = vector_service.build_index(
@@ -303,15 +317,15 @@ def process_video():
             }
         )
     except TranscriptError as exc:
-        return jsonify({"error": str(exc)}), 422
+        return jsonify({"error": str(exc), "can_paste_transcript": True}), 422
     except RuntimeError as exc:
         # Quota exhaustion / config problems surface here — log the real cause
         # so a 503 is diagnosable from the server console.
         logger.exception("process-video failed (503) for %s", video_id)
         return jsonify({"error": str(exc)}), 503
-    except Exception as exc:
+    except Exception:
         logger.exception("process-video failed (500) for %s", video_id)
-        return jsonify({"error": f"Failed to process video: {exc}"}), 500
+        return jsonify({"error": "Something went wrong while processing this video. Please try again."}), 500
 
 
 @video_bp.route("/video/<video_id>", methods=["GET"])
@@ -338,7 +352,7 @@ def summary():
         text = llm_service.generate_summary(video["transcript"], language)
         return jsonify({"summary": text})
     except Exception as exc:
-        return jsonify({"error": f"Failed to generate summary: {exc}"}), 500
+        return error_response("Failed to generate summary", exc)
 
 
 @video_bp.route("/key-points", methods=["POST"])
@@ -364,4 +378,4 @@ def key_points():
         points = llm_service.generate_key_points(timestamped, language)
         return jsonify({"key_points": points})
     except Exception as exc:
-        return jsonify({"error": f"Failed to extract key points: {exc}"}), 500
+        return error_response("Failed to extract key points", exc)

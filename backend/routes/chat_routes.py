@@ -12,6 +12,7 @@ from models import chat as chat_model
 from models import video as video_model
 from models import analytics as analytics_model
 from services import vector_service, llm_service
+from utils.helpers import error_response
 from utils.auth import token_required
 
 chat_bp = Blueprint("chat", __name__)
@@ -91,7 +92,7 @@ def ask():
             }
         )
     except Exception as exc:
-        return jsonify({"error": f"Failed to answer question: {exc}"}), 500
+        return error_response("Failed to answer question", exc)
 
 
 @chat_bp.route("/history", methods=["GET"])
@@ -105,7 +106,7 @@ def history():
             {"history": [chat_model.serialize_chat(c) for c in chats]}
         )
     except Exception as exc:
-        return jsonify({"error": f"Failed to load history: {exc}"}), 500
+        return error_response("Failed to load history", exc)
 
 
 @chat_bp.route("/history", methods=["DELETE"])
@@ -126,4 +127,4 @@ def clear_history():
             deleted = chat_model.delete_history(g.user_id, video_id)
         return jsonify({"message": "History cleared", "deleted": deleted})
     except Exception as exc:
-        return jsonify({"error": f"Failed to clear history: {exc}"}), 500
+        return error_response("Failed to clear history", exc)

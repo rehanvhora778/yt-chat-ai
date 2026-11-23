@@ -32,6 +32,7 @@ from models import user as user_model
 from models import otp as otp_model
 from services.email_service import EmailError, send_otp_email
 from services.google_auth_service import GoogleAuthError, verify_google_token
+from utils.helpers import error_response
 from utils.auth import generate_token, token_required
 
 auth_bp = Blueprint("auth", __name__)
@@ -146,7 +147,7 @@ def register():
     except (RuntimeError, PyMongoError) as exc:
         return _service_unavailable(exc)
     except Exception as exc:
-        return jsonify({"error": f"Registration failed: {exc}"}), 500
+        return error_response("Registration failed", exc)
 
 
 @auth_bp.route("/verify-otp", methods=["POST"])
@@ -191,7 +192,7 @@ def verify_otp():
     except (RuntimeError, PyMongoError) as exc:
         return _service_unavailable(exc)
     except Exception as exc:
-        return jsonify({"error": f"Verification failed: {exc}"}), 500
+        return error_response("Verification failed", exc)
 
 
 @auth_bp.route("/resend-otp", methods=["POST"])
@@ -224,7 +225,7 @@ def resend_otp():
     except (RuntimeError, PyMongoError) as exc:
         return _service_unavailable(exc)
     except Exception as exc:
-        return jsonify({"error": f"Could not resend the code: {exc}"}), 500
+        return error_response("Could not resend the code", exc)
 
 
 @auth_bp.route("/login", methods=["POST"])
@@ -269,7 +270,7 @@ def login():
     except (RuntimeError, PyMongoError) as exc:
         return _service_unavailable(exc)
     except Exception as exc:
-        return jsonify({"error": f"Login failed: {exc}"}), 500
+        return error_response("Login failed", exc)
 
 
 @auth_bp.route("/google", methods=["POST"])
@@ -323,7 +324,7 @@ def google_sign_in():
     except (RuntimeError, PyMongoError) as exc:
         return _service_unavailable(exc)
     except Exception as exc:
-        return jsonify({"error": f"Google sign-in failed: {exc}"}), 500
+        return error_response("Google sign-in failed", exc)
 
 
 @auth_bp.route("/me", methods=["GET"])

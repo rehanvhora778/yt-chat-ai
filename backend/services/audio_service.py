@@ -18,6 +18,7 @@ imageio-ffmpeg binary) and a valid GOOGLE_API_KEY.
 """
 
 import os
+import logging
 import re
 import shutil
 import subprocess
@@ -29,6 +30,9 @@ from google.api_core.exceptions import ResourceExhausted
 
 from config import Config
 from utils.helpers import format_timestamp
+
+
+logger = logging.getLogger("audio_service")
 
 
 class AudioTranscriptionError(Exception):
@@ -93,7 +97,11 @@ def _download_and_compress(video_id: str, work_dir: str) -> str:
             info = ydl.extract_info(url, download=False)
         duration = info.get("duration") or 0
     except Exception as exc:
-        raise AudioTranscriptionError(f"Could not read the video: {exc}")
+        # yt-dlp's own text ("Failed to extract any player response ...
+        # report this issue") is noise to a user; it is almost always YouTube
+        # refusing a cloud IP.
+        logger.warning("yt-dlp could not read %s: %s", video_id, exc)
+        raise AudioTranscriptionError("YouTube would not let the server read this video.")
 
     if duration and duration > _MAX_DURATION_SECONDS:
         raise AudioTranscriptionError(
@@ -116,9 +124,8 @@ def _download_and_compress(video_id: str, work_dir: str) -> str:
         ) as ydl:
             ydl.download([url])
     except Exception as exc:
-        raise AudioTranscriptionError(
-            f"Could not download the video's audio: {exc}"
-        )
+        logger.warning("yt-dlp could not download audio for %s: %s", video_id, exc)
+        raise AudioTranscriptionError("YouTube would not let the server download the audio.")
 
     raw_files = [f for f in os.listdir(work_dir) if f.startswith("raw.")]
     if not raw_files:
@@ -242,7 +249,8 @@ def _transcribe_with_groq(audio_path: str, language: str):
                 "Groq's free-tier rate limit was reached for audio "
                 "transcription. Please wait a minute and try again."
             )
-        raise AudioTranscriptionError(f"Groq transcription failed: {exc}")
+        logger.warning("Groq transcription failed: %s", exc)
+        raise AudioTranscriptionError("The speech-to-text service failed. Please try again.")
 
     raw_segments = getattr(result, "segments", None) or []
     segments = []

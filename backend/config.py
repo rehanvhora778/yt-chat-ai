@@ -223,6 +223,17 @@ class Config:
     WEBSHARE_PROXY_PASSWORD = os.getenv("WEBSHARE_PROXY_PASSWORD", "").strip()
     YOUTUBE_PROXY_URL = os.getenv("YOUTUBE_PROXY_URL", "").strip()
 
+    # ---- Supadata: transcript API used when YouTube blocks this server ----
+    # YouTube refuses most cloud IPs, so on Render the direct caption fetch
+    # and the audio download both fail. Supadata fetches the captions from its
+    # own network instead. Free plan: 100 transcripts/month, no credit card -
+    # https://supadata.ai. Blank disables it; users can still paste a transcript.
+    SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY", "").strip()
+
+    @classmethod
+    def youtube_proxy_configured(cls):
+        return bool(cls.youtube_proxy_url())
+
     @classmethod
     def youtube_proxy_url(cls):
         """
