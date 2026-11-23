@@ -50,8 +50,12 @@ def _prune_jobs():
             del _jobs[key]
 
 
-def _run_processing_job(job_id, video_id, language, user_id):
-    """Worker thread: same pipeline as /process-video, reporting each stage."""
+def _run_processing_job(job_id, video_id, language, user_id, pasted=None):
+    """Worker thread: same pipeline as /process-video, reporting each stage.
+
+    `pasted` is a transcript the user copied from YouTube themselves, used
+    when YouTube blocks this server from fetching one.
+    """
     try:
         _job_update(job_id, step="metadata", message="Fetching video details")
         meta = fetch_video_metadata(video_id)
@@ -59,8 +63,15 @@ def _run_processing_job(job_id, video_id, language, user_id):
         _job_update(job_id, step="captions", message="Extracting transcript")
         source = "captions"
         try:
-            transcript = transcript_service.fetch_transcript(video_id, language)
+            if pasted:
+                source = "manual"
+                transcript = transcript_service.parse_pasted_transcript(pasted, language)
+            else:
+                transcript = transcript_service.fetch_transcript(video_id, language)
         except TranscriptError as caption_err:
+            if pasted:
+                raise
+
             _job_update(
                 job_id,
                 step="audio",
@@ -75,6 +86,9 @@ def _run_processing_job(job_id, video_id, language, user_id):
                     done=True,
                     error=f"{caption_err} Audio transcription also "
                     f"failed: {audio_err}",
+                    # Both routes go through YouTube, so the one that cannot
+                    # be blocked is the user pasting the transcript in.
+                    can_paste_transcript=True,
                 )
                 return
 
@@ -109,7 +123,7 @@ def _run_processing_job(job_id, video_id, language, user_id):
             },
         )
     except TranscriptError as exc:
-        _job_update(job_id, done=True, error=str(exc))
+        _job_update(job_id, done=True, error=str(exc), can_paste_transcript=True)
     except Exception as exc:
         logger.exception("process-video job failed for %s", video_id)
         _job_update(job_id, done=True, error=f"Failed to process video: {exc}")
@@ -126,9 +140,17 @@ def process_video_start():
     url = (data.get("url") or "").strip()
     language = (data.get("language") or "en").lower()
 
+    pasted = (data.get("transcript") or "").strip() or None
+
     video_id = extract_video_id(url)
     if not video_id:
         return jsonify({"error": "Please provide a valid YouTube URL"}), 400
+    if pasted:
+        # Fail fast on an obviously wrong paste instead of after a job starts.
+        try:
+            transcript_service.parse_pasted_transcript(pasted, language)
+        except TranscriptError as exc:
+            return jsonify({"error": str(exc), "can_paste_transcript": True}), 422
 
     existing = video_model.find_by_video_id(video_id)
     if existing and existing.get("segments"):
@@ -155,11 +177,12 @@ def process_video_start():
             "message": "Starting",
             "done": False,
             "error": None,
+            "can_paste_transcript": False,
             "result": None,
         }
     threading.Thread(
         target=_run_processing_job,
-        args=(job_id, video_id, language, g.user_id),
+        args=(job_id, video_id, language, g.user_id, pasted),
         daemon=True,
     ).start()
     return jsonify({"job_id": job_id})
@@ -180,6 +203,7 @@ def process_video_status(job_id):
         "message": snapshot["message"],
         "done": snapshot["done"],
         "error": snapshot["error"],
+        "can_paste_transcript": snapshot.get("can_paste_transcript", False),
     }
     if snapshot["result"]:
         payload.update(snapshot["result"])

@@ -16,6 +16,7 @@ import {
   ArrowRight,
   AudioLines,
   CheckCircle2,
+  ClipboardPaste,
   Database,
   FileText,
   Languages,
@@ -76,6 +77,10 @@ const ProcessVideo = () => {
   const [activeStep, setActiveStep] = useState(0);
   const [audioFallback, setAudioFallback] = useState(false);
   const [error, setError] = useState("");
+  // Set when the backend says YouTube refused it the transcript, which is the
+  // one failure the user can route around by pasting the text themselves.
+  const [canPaste, setCanPaste] = useState(false);
+  const [pastedText, setPastedText] = useState("");
 
   // The start request must fire exactly once, but under React StrictMode the
   // effect runs twice (run → cleanup → run). Sharing the promise in a ref lets
@@ -93,8 +98,9 @@ const ProcessVideo = () => {
     let cancelled = false;
     let pollTimer = null;
 
-    const fail = (message) => {
+    const fail = (message, pasteable = false) => {
       if (pollTimer) clearInterval(pollTimer);
+      setCanPaste(pasteable);
       setError(message);
       notifyRef.current.error(message);
     };
@@ -115,10 +121,17 @@ const ProcessVideo = () => {
         try {
           const res = await videoApi.processStatus(jobId);
           if (cancelled) return;
-          const { step, done, error: jobError, video, transcript_source } = res.data;
+          const {
+            step,
+            done,
+            error: jobError,
+            video,
+            transcript_source,
+            can_paste_transcript,
+          } = res.data;
 
           if (jobError) {
-            fail(jobError);
+            fail(jobError, Boolean(can_paste_transcript));
             return;
           }
           if (step === "audio") setAudioFallback(true);
@@ -129,6 +142,8 @@ const ProcessVideo = () => {
               video,
               transcript_source === "audio"
                 ? "No captions found — transcribed the audio with AI!"
+                : transcript_source === "manual"
+                ? "Processed your pasted transcript!"
                 : "Video processed!"
             );
           }
@@ -140,7 +155,11 @@ const ProcessVideo = () => {
     };
 
     if (!startPromiseRef.current) {
-      startPromiseRef.current = videoApi.processStart(target.url, target.language);
+      startPromiseRef.current = videoApi.processStart(
+        target.url,
+        target.language,
+        target.transcript
+      );
     }
     startPromiseRef.current
       .then((res) => {
@@ -154,7 +173,7 @@ const ProcessVideo = () => {
       })
       .catch((err) => {
         if (cancelled) return;
-        fail(getErrorMessage(err));
+        fail(getErrorMessage(err), Boolean(err?.response?.data?.can_paste_transcript));
       });
 
     return () => {
@@ -176,9 +195,25 @@ const ProcessVideo = () => {
     setTarget({ url: draftUrl.trim(), language: preferences.language });
   };
 
+  const submitPasted = (event) => {
+    event.preventDefault();
+    if (pastedText.trim().length < 200) {
+      notify.error("Paste the full transcript — that looks too short");
+      return;
+    }
+    startPromiseRef.current = null;
+    setError("");
+    setCanPaste(false);
+    setActiveStep(0);
+    setAudioFallback(false);
+    setTarget({ ...target, transcript: pastedText.trim() });
+  };
+
   const retry = () => {
     startPromiseRef.current = null;
     setError("");
+    setCanPaste(false);
+    setPastedText("");
     setActiveStep(0);
     setAudioFallback(false);
     setTarget(null);
@@ -358,6 +393,33 @@ const ProcessVideo = () => {
             <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-muted">
               {error}
             </p>
+            {canPaste && (
+              <form onSubmit={submitPasted} className="mt-5 text-left">
+                <label
+                  htmlFor="pasted-transcript"
+                  className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-ink"
+                >
+                  <ClipboardPaste size={14} className="text-accent" />
+                  Paste the transcript instead
+                </label>
+                <p className="mb-2 text-xs leading-relaxed text-muted">
+                  On YouTube, open the video, click <strong>…more</strong> under the
+                  title, then <strong>Show transcript</strong>. Select all the text in
+                  that panel, copy it and paste it here.
+                </p>
+                <textarea
+                  id="pasted-transcript"
+                  value={pastedText}
+                  onChange={(event) => setPastedText(event.target.value)}
+                  rows={6}
+                  placeholder={"0:00\nWelcome to the video...\n0:05\nToday we'll cover..."}
+                  className="input-field min-h-[9rem] resize-y py-2.5 font-mono text-xs"
+                />
+                <button type="submit" className="btn-primary mt-3 w-full">
+                  <Sparkles size={16} /> Process pasted transcript
+                </button>
+              </form>
+            )}
             <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
               <button onClick={retry} className="btn-primary">
                 Try another video

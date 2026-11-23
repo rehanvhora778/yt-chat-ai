@@ -191,15 +191,19 @@ A free Render instance stops when idle and takes ~50s to boot on the next
 request. The frontend already fires a warm-up ping at page load to hide most
 of it. **Fix:** Render Starter ($7/mo) never sleeps.
 
-### Vector indexes are wiped on every redeploy — the big one
+### Vector indexes survive restarts — handled in code
 
-The FAISS index for each video is written to the instance's local disk, and
-that disk is destroyed on every deploy and every restart. Video metadata and
-chats survive in MongoDB, but **chatting with an already-processed video will
-fail until that video is processed again.**
+The instance's local disk is destroyed on every deploy and restart, which used
+to break chat for every processed video. Now each FAISS index is also stored in
+MongoDB (GridFS bucket `faiss_indexes`, about 1 MB per video). The disk is only
+a cache:
 
-**Fix:** move to a paid instance, uncomment the `disk:` block at the bottom of
-`render.yaml`, and add `FAISS_STORE_PATH=/var/data/faiss_store`.
+1. On build, the index is saved to disk **and** uploaded to MongoDB.
+2. On the first question after a restart, it is restored from MongoDB.
+3. If there is no stored copy (videos processed before this existed), it is
+   rebuilt from the transcript already stored on the video document.
+
+No paid disk needed. Atlas M0's 512 MB holds a few hundred videos' indexes.
 
 ### 512 MB of RAM
 
@@ -214,7 +218,12 @@ Videos that process fine on your laptop can fail on Render with *"YouTube is
 blocking requests coming from this server"*. This is YouTube refusing
 datacenter IP ranges, not a bug in the app.
 
-**Fix:** a rotating **residential** proxy. Sign up at
+**Built-in fallback (free):** when YouTube refuses the server, the processing
+page offers a *Paste the transcript instead* box. The user copies the text from
+YouTube's own *Show transcript* panel — their browser is not blocked — and the
+app parses it (timestamps kept, or estimated if absent) and continues as normal.
+
+**Full fix:** a rotating **residential** proxy. Sign up at
 <https://www.webshare.io>, then set `WEBSHARE_PROXY_USERNAME` and
 `WEBSHARE_PROXY_PASSWORD` on Render. Any other provider works too — put its
 full `http://user:pass@host:port` URL in `YOUTUBE_PROXY_URL`. Both the
@@ -259,7 +268,7 @@ environment variable in the Render dashboard also triggers a redeploy.
 | *"Can't reach the database"* / *"Database is not available"* | Open `https://<backend>/api/health` and read `database` and `database_error`. `ConfigurationError` = the Atlas cluster in `MONGO_URI` no longer exists or the host is mistyped (see below). `ServerSelectionTimeoutError` = Atlas Network Access is missing `0.0.0.0/0`, or the cluster is paused. `OperationFailure` = wrong username/password, or a password with special characters that is not percent-encoded. |
 | No signup email arrives | `SMTP_PASSWORD` is a normal Gmail password, not an App Password. Also check spam. |
 | *"YouTube is blocking requests coming from this server"* | Datacenter IP block — configure the proxy above. |
-| Chat says the video needs processing again | Instance restarted and the ephemeral FAISS index was lost. Re-process, or add a persistent disk. |
+| First question after a restart is slow | The FAISS index is being restored from MongoDB (or rebuilt from the transcript). Expected once per video per restart. |
 
 ### The Atlas cluster was deleted or paused
 

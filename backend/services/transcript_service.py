@@ -13,6 +13,8 @@ Robustness notes:
     language — Gemini always answers in the requested language regardless.
 """
 
+import re
+
 from youtube_transcript_api import (
     YouTubeTranscriptApi,
     TranscriptsDisabled,
@@ -202,4 +204,111 @@ def fetch_transcript(video_id: str, language: str = "en") -> dict:
         "segments": segments,
         "text": full_text,
         "timestamped_text": timestamped_text,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Pasted transcripts
+# ---------------------------------------------------------------------------
+# The fallback for when YouTube blocks the server outright. Captions and audio
+# both come from YouTube, so a blocked datacenter IP loses both at once; the
+# viewer's own browser is not blocked, and YouTube's "Show transcript" panel
+# lets them copy the text. These parse what that copy produces.
+
+MIN_PASTED_CHARS = 200
+MAX_PASTED_CHARS = 400_000
+# Speaking rate used to estimate timestamps for text pasted without any.
+_WORDS_PER_SECOND = 2.5
+
+_TS = r"(?:\d{1,2}:)?\d{1,2}:\d{2}"
+_TS_ONLY = re.compile(rf"^\[?({_TS})\]?$")
+_TS_PREFIX = re.compile(rf"^\[?({_TS})\]?\s*[-–:]?\s+(.+)$")
+# The transcript panel also carries screen-reader labels such as
+# "1 minute, 5 seconds" under each timestamp; they are not speech.
+_DURATION_LABEL = re.compile(
+    r"^(\d+\s+(hours?|minutes?|seconds?),?\s*)+$", re.IGNORECASE
+)
+
+
+def _ts_to_seconds(stamp: str) -> float:
+    total = 0
+    for part in stamp.split(":"):
+        total = total * 60 + int(part)
+    return float(total)
+
+
+def parse_pasted_transcript(text: str, language: str = "en") -> dict:
+    """
+    Turn a pasted transcript into the same shape fetch_transcript returns.
+
+    Accepts YouTube's panel copy (timestamp on its own line, text below),
+    "0:42 text" / "[0:42] text" lines, or plain text with no timestamps at
+    all, in which case start times are estimated from word count.
+    Raises TranscriptError if the text is too short or too long to be one.
+    """
+    text = (text or "").strip()
+    if len(text) < MIN_PASTED_CHARS:
+        raise TranscriptError(
+            "That transcript is too short. Paste the full transcript from "
+            "YouTube's \"Show transcript\" panel."
+        )
+    if len(text) > MAX_PASTED_CHARS:
+        raise TranscriptError("That transcript is too long (over 400,000 characters).")
+
+    lines = [ln.strip() for ln in text.splitlines()]
+    lines = [ln for ln in lines if ln and not _DURATION_LABEL.match(ln)]
+
+    segments = []
+    pending_start = None
+    for line in lines:
+        only = _TS_ONLY.match(line)
+        if only:
+            pending_start = _ts_to_seconds(only.group(1))
+            continue
+        prefixed = _TS_PREFIX.match(line)
+        if prefixed:
+            segments.append(
+                {"text": prefixed.group(2).strip(),
+                 "start": _ts_to_seconds(prefixed.group(1)), "duration": 0.0}
+            )
+            pending_start = None
+        elif pending_start is not None:
+            segments.append({"text": line, "start": pending_start, "duration": 0.0})
+            pending_start = None
+        elif segments:
+            # A continuation line with no timestamp of its own.
+            segments[-1]["text"] += " " + line
+        else:
+            segments.append({"text": line, "start": None, "duration": 0.0})
+
+    if not any(seg["start"] is not None for seg in segments):
+        # No timestamps anywhere: split into sentences and estimate.
+        words_so_far = 0
+        sentences = re.split(r"(?<=[.!?])\s+", " ".join(lines))
+        segments = []
+        for sentence in sentences:
+            if sentence.strip():
+                segments.append(
+                    {"text": sentence.strip(),
+                     "start": round(words_so_far / _WORDS_PER_SECOND, 1),
+                     "duration": 0.0}
+                )
+                words_so_far += len(sentence.split())
+    else:
+        # Leading untimed lines start at zero; durations run to the next start.
+        for seg in segments:
+            if seg["start"] is None:
+                seg["start"] = 0.0
+        for current, following in zip(segments, segments[1:]):
+            current["duration"] = max(following["start"] - current["start"], 0.0)
+
+    segments = [seg for seg in segments if seg["text"]]
+    full_text = " ".join(s["text"] for s in segments)
+    return {
+        "language": language,
+        "segments": segments,
+        "text": full_text,
+        "timestamped_text": "\n".join(
+            f"[{format_timestamp(s['start'])}] {s['text']}" for s in segments
+        ),
     }
