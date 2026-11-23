@@ -111,7 +111,10 @@ services:
       - key: OTP_ON_LOGIN
         value: "false"
 
-    # ---- Persistent storage for the FAISS indexes (OPTIONAL, PAID) ----
+    # ---- Persistent storage for the FAISS indexes (NOT NEEDED) ----
+    # Indexes are now backed up to MongoDB (GridFS) and restored on demand, so
+    # losing the disk costs one slow first question, not a reprocess. The
+    # note below is kept for anyone who wants the local copy to persist too.
     # Render's free filesystem is ephemeral: every redeploy and every wake
     # from sleep wipes backend/faiss_store, so previously processed videos
     # must be processed again before they can be chatted with. Mongo keeps the

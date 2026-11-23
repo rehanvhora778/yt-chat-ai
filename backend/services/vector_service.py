@@ -7,12 +7,28 @@ Pipeline:
     1. Split the transcript into overlapping chunks (RecursiveCharacterTextSplitter)
        while preserving the start timestamp of each chunk as metadata.
     2. Embed the chunks with Google Generative AI embeddings.
-    3. Persist the FAISS index to disk under FAISS_STORE_PATH/<video_id>.
-    4. On query, load the index and run a semantic similarity search.
+    3. Persist the FAISS index to disk under FAISS_STORE_PATH/<video_id>, and
+       back it up to MongoDB (GridFS) so it survives the host's disk being wiped.
+    4. On query, load the index and run a semantic similarity search. If the
+       local copy is gone, restore it from MongoDB first.
+
+Why the MongoDB copy: Render's free filesystem is ephemeral. Every redeploy,
+restart and wake from sleep wipes FAISS_STORE_PATH, which used to leave every
+processed video unusable until someone processed it again. MongoDB is the one
+store that persists, so it keeps the authoritative copy; the disk is a cache.
 """
 
+import io
+import logging
 import os
+import shutil
+import tempfile
+import threading
 import time
+import zipfile
+
+import gridfs
+from pymongo.errors import PyMongoError
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
@@ -20,6 +36,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from config import Config
+from extensions import get_db
 from utils.helpers import format_timestamp
 # Reuse the same 429/quota detection + suggested-delay parsing the chat path uses.
 from services.llm_service import _is_rate_limit, _retry_delay_seconds
@@ -30,6 +47,16 @@ from services.llm_service import _is_rate_limit, _retry_delay_seconds
 _PROVIDER_FILE = "embedding_provider.txt"
 _RATE_LIMIT_RETRIES = 2
 _MAX_RETRY_WAIT = 30  # seconds
+
+logger = logging.getLogger("vector_service")
+
+# GridFS bucket holding one zip per video: index.faiss + index.pkl + provider.
+_BUCKET = "faiss_indexes"
+# Only these names are ever written back to disk from a stored archive, so a
+# tampered archive cannot drop files anywhere else.
+_INDEX_FILES = ("index.faiss", "index.pkl", _PROVIDER_FILE)
+# Serialises restores of the same video across request threads.
+_restore_lock = threading.Lock()
 
 
 def _get_gemini_embeddings():
@@ -82,8 +109,91 @@ def _read_provider(path: str) -> str:
         return "gemini"
 
 
-def index_exists(video_id: str) -> bool:
+def _local_index_exists(video_id: str) -> bool:
     return os.path.exists(os.path.join(_index_path(video_id), "index.faiss"))
+
+
+def _bucket():
+    db = get_db()
+    return gridfs.GridFSBucket(db, bucket_name=_BUCKET) if db is not None else None
+
+
+def _backup_index(video_id: str, path: str, provider: str) -> None:
+    """Store the on-disk index in MongoDB, replacing any older copy.
+
+    Failure is logged, not raised: the index on disk still works for now, and
+    if it is later lost the chat path rebuilds it from the stored transcript.
+    """
+    try:
+        bucket = _bucket()
+        if bucket is None:
+            return
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name in _INDEX_FILES:
+                full = os.path.join(path, name)
+                if os.path.exists(full):
+                    zf.write(full, arcname=name)
+        buf.seek(0)
+        new_id = bucket.upload_from_stream(
+            video_id, buf, metadata={"provider": provider}
+        )
+        # Drop older versions only after the new one is safely stored.
+        for old in bucket.find({"filename": video_id, "_id": {"$ne": new_id}}):
+            bucket.delete(old._id)
+    except PyMongoError as exc:
+        logger.warning("Could not back up FAISS index for %s: %s", video_id, exc)
+
+
+def _restore_index(video_id: str) -> bool:
+    """Copy a video's index from MongoDB to disk. True if it is now on disk."""
+    with _restore_lock:
+        if _local_index_exists(video_id):
+            return True  # another thread restored it while this one waited
+        try:
+            bucket = _bucket()
+            if bucket is None:
+                return False
+            latest = next(
+                iter(bucket.find({"filename": video_id}).sort("uploadDate", -1).limit(1)),
+                None,
+            )
+            if latest is None:
+                return False
+            data = bucket.open_download_stream(latest._id).read()
+        except PyMongoError as exc:
+            logger.warning("Could not restore FAISS index for %s: %s", video_id, exc)
+            return False
+
+        os.makedirs(Config.FAISS_STORE_PATH, exist_ok=True)
+        # Unpack into a temp dir and rename into place, so a reader never sees
+        # a half-written index.
+        tmp = tempfile.mkdtemp(dir=Config.FAISS_STORE_PATH, prefix=".restore-")
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                for name in _INDEX_FILES:
+                    if name in zf.namelist():
+                        with open(os.path.join(tmp, name), "wb") as fh:
+                            fh.write(zf.read(name))
+            if not os.path.exists(os.path.join(tmp, "index.faiss")):
+                return False
+            # A leftover folder without index.faiss would block the rename.
+            shutil.rmtree(_index_path(video_id), ignore_errors=True)
+            os.replace(tmp, _index_path(video_id))
+            tmp = None
+            logger.info("Restored FAISS index for %s from MongoDB", video_id)
+            return True
+        except (OSError, zipfile.BadZipFile) as exc:
+            logger.warning("Stored FAISS index for %s is unusable: %s", video_id, exc)
+            return False
+        finally:
+            if tmp:
+                shutil.rmtree(tmp, ignore_errors=True)
+
+
+def index_exists(video_id: str) -> bool:
+    """True if the index is on disk, restoring it from MongoDB if needed."""
+    return _local_index_exists(video_id) or _restore_index(video_id)
 
 
 def _build_documents(segments, chunk_size=1000, chunk_overlap=150):
@@ -202,6 +312,7 @@ def build_index(video_id: str, segments) -> int:
     path = _index_path(video_id)
     store.save_local(path)
     _write_provider(path, provider)
+    _backup_index(video_id, path, provider)
     return len(documents)
 
 

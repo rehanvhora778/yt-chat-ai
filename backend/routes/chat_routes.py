@@ -37,10 +37,18 @@ def ask():
     if not video:
         return jsonify({"error": "Video not found. Process it first."}), 404
 
-    if not vector_service.index_exists(video_id):
-        return jsonify({"error": "This video has no search index yet. Reprocess it."}), 409
-
     try:
+        # index_exists() restores the index from MongoDB when the host's disk
+        # was wiped. If there is no stored copy either (a video processed
+        # before backups existed), rebuild it from the stored transcript rather
+        # than making the user process the video again.
+        if not vector_service.index_exists(video_id):
+            if not video.get("segments"):
+                return jsonify(
+                    {"error": "This video has no transcript stored. Process it again."}
+                ), 409
+            vector_service.build_index(video_id, video["segments"])
+
         # 1) Retrieve the most relevant transcript chunks to ground the answer.
         chunks = vector_service.similarity_search(video_id, question, k=6)
 
